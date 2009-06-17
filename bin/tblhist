@@ -1,0 +1,377 @@
+#!/bin/env perl
+
+use strict;
+use warnings;
+use Getopt::Std;
+use Pod::Usage;
+use Scalar::Util qw(looks_like_number);
+use FileHandle;
+
+my $infile   = new FileHandle;
+my %opt      = ();               # command line options
+my $bin_size = -1;               # bin size
+my %hist;                        # the actual histogram
+my $key_col       = -1;          # column index to generate histogram from
+my $count_lines   = 0;           # number of lines
+my $key_spec      = '';          # column name specified by user
+my $sum           = 0.0;         # sum of column values
+my $cutoff_bucket = 1e20
+  ; # if bin size is specified by user, the right bound on the last bin should be inclusive
+my $max_count     = 0;        # maximum count per bucket
+my $min_val       = 1e20;     # minimum value
+my $max_val       = -1e20;    # maximum value
+my $min_cutoff    = -1e20;    # lower bound for histogram
+my $max_cutoff    = 1e20;     # upper bound for histogram
+my $display_width = 30;       # screen size scaling
+my $num_bins_opt  = -1;       # number of bins specified as option?
+my $ascii_flag    = 0;        # print ascii art
+my $delim         = "\t";     # input file delimiter
+my $filename;                 # name of input file
+my @fields;                   # column names from header
+my $opt_gz    = 0;            # gzipped?
+my $no_header = 0;
+
+# guess file delimiter from header line
+sub guess_delim
+{
+    my $line = shift;
+
+    my $delim = "\t";
+
+    if ( $line =~ m/,/ )
+    {
+        $delim = ',';
+    }
+    elsif ( $line =~ m/\t/ )
+    {
+        $delim = "\t";
+    }
+    elsif ( $line =~ m/ / )
+    {
+        $delim = ' ';
+    }
+    elsif ( $line =~ m// )
+    {
+        $delim = '';
+    }
+    return $delim;
+}
+
+#
+# Command line options processing
+#
+sub parse_options()
+{
+    my $opt_string = 'ab:d:k:c:C:hmn:w:';
+
+    Getopt::Std::getopts( $opt_string, \%opt ) or pod2usage(2);
+    pod2usage( { -exitval => 0, -verbose => 2 } ) if $opt{'m'};
+    pod2usage(1) if $opt{'h'};
+
+    pod2usage(2) if $#ARGV <= -1;
+
+    $filename = $ARGV[0];
+
+    if ( $filename =~ /\.gz$|\.Z$|\.zip$/ )
+    {
+
+        # a GZIP file
+        $opt_gz = 1;
+    }
+
+    $bin_size      = $opt{'b'} if ( $opt{'b'} );
+    $min_cutoff    = $opt{'c'} if ( defined $opt{'c'} );
+    $max_cutoff    = $opt{'C'} if ( defined $opt{'C'} );
+    $display_width = $opt{'w'} if ( defined $opt{'w'} );
+    $ascii_flag    = 1         if ( defined $opt{'a'} );
+
+    if ( defined $opt{'k'} )
+    {
+        $key_spec = $opt{'k'};
+        $key_spec = lc($key_spec);
+    }
+
+    if ( $opt{'n'} )
+    {
+        $num_bins_opt = $opt{'n'};
+        die "error: you cannot specify -b and -n simultaneously"
+          if ( $opt{'b'} );
+    }
+}
+
+#
+# read and store column names
+#
+sub process_header
+{
+
+    $infile->open( $opt_gz ? "gunzip -c $filename |" : $filename )
+      or die "Can't open '$filename': $!";
+
+    ## Get field names from first line
+    my $header = <$infile>;
+    $infile->close;
+
+    $header =~ s/\s+$//g;
+
+    $delim = guess_delim($header) if ( !$opt{'d'} );
+
+
+    @fields = map { s/^\s+//; s/\s$//; lc($_); } split( /\t/, $header );
+
+    if ( $#fields == 0 )
+    {
+
+        # only one columns
+        $key_col = 0;
+        return;
+    }
+
+    for ( my $i = 0 ; $i < scalar(@fields) ; $i++ )
+    {
+        $key_col = $i if ( $fields[$i] eq $key_spec );
+    }
+
+    if ( $key_col == -1 )
+    {
+
+        # column number specified?
+        $key_col = $key_spec
+          if ( looks_like_number($key_spec) and ( $key_spec <= $#fields ) );
+        $no_header = 1;
+    }
+
+    die "error: target column not found: $key_spec" if ( $key_col == -1 );
+}
+
+#
+## gather min and max values
+#
+sub scan_bounds
+{
+    $infile->open( $opt_gz ? "gunzip -c $filename |" : $filename )
+      or die "Can't open '$filename': $!";
+
+    ## Get field names from first line
+    my $header = <$infile> unless $no_header;
+    $count_lines = 0;
+
+    while (<$infile>)
+    {
+        chomp;
+        @fields = split $delim, $_;
+        my $val = $fields[$key_col];
+        next unless ( looks_like_number($val) );
+        $count_lines++;
+        $min_val = $val if ( $min_val > $val );
+        $max_val = $val if ( $max_val < $val );
+    }
+    $infile->close;
+}
+
+#
+## construct histogram
+#
+sub process_file
+{
+    $infile->open( $opt_gz ? "gunzip -c $filename |" : $filename )
+      or die "Can't open '$filename': $!";
+
+    ## Get field names from first line
+    my $header = <$infile> unless $no_header;
+
+    while (<$infile>)
+    {
+        chomp;
+        @fields = split $delim, $_ ;
+        my $val = $fields[$key_col];
+        next unless ( looks_like_number($val) );
+
+        $val = $min_val if $val < $min_val;
+        $val = $max_val if $val > $max_val;
+
+        my $bucket = int( $val / $bin_size );
+        $bucket = $cutoff_bucket if ( $bucket > $cutoff_bucket );
+
+        my $cached = $hist{$bucket} || 0;
+
+        $cached++;
+        $sum += $val;
+        $hist{$bucket} = $cached;
+        $max_count = $cached if ( $max_count < $cached );
+    }
+    $infile->close;
+}
+
+#
+## output histogram
+#
+sub print_report
+{
+
+    print
+"histogram of $filename (column '$key_spec'): lines: $count_lines; key_spec: $key_spec; field: $key_col min: $min_val max: $max_val avg: "
+      . ( $sum / $count_lines ) . "\n";
+    print "bin\t    left\tcount\t     %\t    cum %\n";
+    my $cum = 0;
+
+    my $min_bucket = int( $min_val / $bin_size );
+    my $max_bucket = int( $max_val / $bin_size );
+    $max_bucket = $cutoff_bucket if ( $max_bucket > $cutoff_bucket );
+
+    for ( my $bucket = $min_bucket ; $bucket <= $max_bucket ; $bucket++ )
+    {
+
+        my $right_bound = ( $bucket + 1 ) * $bin_size;
+        my $freq        = 0;
+        my $freq_rel    = 0;
+
+        my $val = $hist{$bucket} || 0;
+
+        $cum += ( 100.0 * $val / $count_lines );
+        $freq     = $val;
+        $freq_rel = 100.0 * $val / $count_lines;
+
+        my $output = sprintf(
+            "%d\t%8.3g\t%d\t%6.2f\t%9.2f",
+            $bucket, $bucket * $bin_size,
+            $freq, $freq_rel, $cum
+        );
+        if ($ascii_flag)
+        {
+            $output = $output . "\t";
+            for ( my $j = 0 ; $j < $display_width * $freq / $max_count ; $j++ )
+            {
+                $output = $output . "*";
+            }
+        }
+        $output = $output . "\n";
+        print $output;
+    }
+}
+
+sub main
+{
+    parse_options();
+    process_header();
+    scan_bounds();
+    $min_val = $min_cutoff if ( $min_val < $min_cutoff );
+    $max_val = $max_cutoff if ( $max_val > $max_cutoff );
+    if ( $bin_size == -1 )
+    {
+        if ($num_bins_opt == -1)
+        {
+            # default if no bin size specified
+            if ($count_lines < 3)
+            {
+                $num_bins_opt = $count_lines;
+            }
+            else
+            {
+               
+                $num_bins_opt = int(sqrt($count_lines-1)-1);
+                $num_bins_opt=$count_lines if ($count_lines < $num_bins_opt);
+            }
+        }
+       
+        $bin_size = ($max_val - $min_val ) / $num_bins_opt;
+        # right border of last bucket is inclusive
+        $cutoff_bucket = int( $max_val / $bin_size ) - 1;
+    }
+    process_file();
+    print_report();
+}
+
+main;
+
+__END__
+
+=head1 NAME
+
+tblhist - histogram from a tab-separated file.
+
+=head1 SYNOPSIS
+
+B<tblhist>	S<[ B<-abcCdhkmnw> ] file>
+
+=head1 OPTIONS
+
+=over
+
+=item B<-a>
+
+"ascii art" plotting
+
+=item B<-b>
+
+bin size
+
+=item B<-c>
+
+lower cutoff value
+
+=item B<-C>
+
+upper cutoff value
+
+=item B<-d> <column delimiter>
+
+default: try any of '\t', ' ', ','
+
+=item B<-h>
+
+show this help message
+
+=item B<-k>
+
+column name
+
+Assumption: the first line of the file contains column names, or the specified column is a column index (first column = 0)
+
+=item B<-m>
+
+print manual page
+
+=item B<-n>
+
+number of bins
+
+At most one of the '-n','-b' options can be specified
+
+=item B<-w>
+
+screen width for ascii plotting
+
+=back
+
+=head1 DESCRIPTION
+
+Compute and display a histogram from a tabular file.
+
+The output contains bin ranges, absolute and relative, and cumulative frequency, and an ascii plot (with option '-a')
+
+=head1 AUTHOR
+
+Stefan Schroedl E<lt>stefan.schroedl@gmx.deE<gt>
+
+=head1 COPYRIGHT
+
+Copyright (c) 2009 by Stefan Schroedl
+
+=head1 LICENSE
+
+This package is free software; you can redistribute it and/or modify it
+under the terms of the "GNU General Public License Version 3".
+
+Please refer to the file "COPYING" for details.
+
+=head1 DISCLAIMER
+
+This package is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+See the "GNU General Public License" for more details.
+
+=cut
+

@@ -1,0 +1,573 @@
+#!/bin/env perl
+
+use strict;
+use warnings;
+use Getopt::Std;
+use Pod::Usage;
+use Cwd;
+
+my %opt;    # command line options
+my $filename1 = '';    # first file to join
+my $filename2 = '';    # second file to join
+my $header1;           # header line of first file
+my $header2;           #  header line of second file
+my $cols1;             # column names of first file
+my $cols2;             # column names of second file
+my $output_file = '';  # output file name
+my $exec_flag   = 1;   # execute join or generate script?
+my $col_hash1;         # column names -> index first file
+my $col_hash2;         # column names -> index file
+my $unix_join_opts = '';    # options for join command
+my @spec_cols;              # user-specified join columns
+my %key_hash;               # names of join columns
+my @key_cols1;              # indices of keys in first file
+my @key_cols2;              # indices of keys in first file
+my %alias_hash;             # user-specified equivalent columns
+my $ljoin      = 0;         # left join?
+my $rjoin      = 0;         # right join?
+my $verbose    = 0;         # verbose output?
+my $debug      = 0;         # debugging
+my $mem_size   = "1G";      # memory option for sort command
+my $null_str   = 'NA';      # default string for non-matching columns
+my $delim      = "\t";      # input file delimiter
+my $join_delim = ''
+  ; # the join delimiter should be a character smaller than any one used in the key, in order to preserve the lexical multi-column ordering
+my $tmp_dir   = cwd();    # directory for temporary files created by sort
+my $gz_flag_1 = 0;        # file 1 gzipped?
+my $gz_flag_2 = 0;        # file 2 gzipped?
+
+sub guess_delim
+{
+    my $line = shift;
+
+    my $delim = "\t";
+
+    if ( $line =~ m/,/ )
+    {
+        $delim = ',';
+    }
+    elsif ( $line =~ m/\t/ )
+    {
+        $delim = "\t";
+    }
+    elsif ( $line =~ m/ / )
+    {
+        $delim = ' ';
+    }
+    elsif ( $line =~ m// )
+    {
+        $delim      = '';
+        $join_delim = '';    # has to be different
+    }
+    return $delim;
+}
+
+sub parse_options()
+{
+    my $opt_string = 'd:o:k:mn:ehlrt:v';
+    Getopt::Std::getopts( "$opt_string", \%opt ) or pod2usage(2);
+
+    pod2usage( { -exitval => 0, -verbose => 2 } ) if $opt{'m'};
+
+    pod2usage(1) if $opt{'h'};
+
+    pod2usage(2) if $#ARGV < 1;
+
+    if ( $opt{'k'} )
+    {
+        @spec_cols = split( /,/, $opt{'k'} );
+
+        # look for aliases "name1=name2"
+        for my $i ( 0 .. $#spec_cols )
+        {
+            my @parts = split( '=', $spec_cols[$i] );
+            if ( $#parts > 0 )
+            {
+                pod2usage(2) if ( $#parts > 1 );
+
+                my $newname = $parts[1];
+                $alias_hash{ $parts[0] } = $newname;
+                $alias_hash{ $parts[1] } = $newname;
+                $spec_cols[$i]           = $newname;
+            }
+        }
+    }
+
+    $exec_flag   = 0         if ( $opt{'e'} );
+    $ljoin       = 1         if ( $opt{'l'} );
+    $rjoin       = 1         if ( $opt{'r'} );
+    $verbose     = 1         if ( $opt{'v'} );
+    $tmp_dir     = $opt{'t'} if ( $opt{'t'} );
+    $delim       = $opt{'d'} if ( $opt{'d'} );
+    $output_file = $opt{'o'} if ( $opt{'o'} );
+    $null_str    = $opt{'n'} if ( defined $opt{'n'} );
+    $unix_join_opts .= "-e '$null_str' "
+      if ( $ljoin or $rjoin )
+      ;    # by default, join performs an outer join if 'e' is specified!
+    $unix_join_opts .= "-a 1 " if $ljoin;
+    $unix_join_opts .= "-a 2 " if $rjoin;
+
+    foreach my $arg (@ARGV)
+    {
+        next if ( $arg =~ m/^-/ );
+        if   ( $filename1 eq '' ) { $filename1 = $arg; }
+        else                      { $filename2 = $arg; }
+    }
+
+    pod2usage(2) if ( $filename2 eq '' );
+
+    if ( $filename1 =~ /\.gz$|\.Z$|\.zip$/ )
+    {
+        $gz_flag_1 = 1;
+    }
+    if ( $filename2 =~ /\.gz$|\.Z$|\.zip$/ )
+    {
+        $gz_flag_2 = 1;
+    }
+}
+
+sub find_join_keys
+{
+
+    # find join column indices
+    if ( $opt{'k'} )
+    {
+
+        # column names specified on command line
+
+        foreach my $colname (@spec_cols)
+        {
+            my $col1 = $col_hash1->{$colname};
+            $key_hash{$colname} = 1;
+            die "error: column name <$colname> not found in file $filename1"
+              unless ( defined $col1 );
+
+            my $col2 = $col_hash2->{$colname};
+            die "error: column name <$colname> not found in file $filename2"
+              unless ( defined $col2 );
+
+            push @key_cols1, $col1;
+            push @key_cols2, $col2;
+        }
+    }
+    else
+    {
+
+        # find all matching names
+        foreach my $colname (@$cols1)
+        {
+            if ( defined $col_hash2->{$colname} )
+            {
+
+                # occurring in both headers
+                $key_hash{$colname} = 1;
+                my $col1 = $col_hash1->{$colname};
+                my $col2 = $col_hash2->{$colname};
+                push @key_cols1, $col1;
+                push @key_cols2, $col2;
+                push @spec_cols, $colname;
+            }
+        }
+        print STDERR "using join columns " . join( ',', @spec_cols ) . "\n";
+    }
+
+    die "error: no matching columns found"
+      if ( $#key_cols1 < 0 or $#key_cols2 < 0 );
+}
+
+# read and hash column names
+sub process_header
+{
+    my ( $filename, $gz_flag ) = @_;
+    open( INFILE, $gz_flag ? "gunzip -c $filename |" : $filename )
+      or die "Can't open '$filename': $!";
+
+    ## Get field names from first line
+    my $header = <INFILE>;
+    $header =~ s/\s+$//g;
+
+    $delim = guess_delim($header) unless $opt{'d'};
+
+    my @fields = map { s/^\s+//; s/\s$//; lc($_); } split( /$delim/, $header );
+
+    # apply aliases
+    my $changed = 0;
+    for my $i ( 0 .. $#fields )
+    {
+        if ( defined $alias_hash{ $fields[$i] } )
+        {
+            $changed = 1;
+            $fields[$i] = $alias_hash{ $fields[$i] };
+        }
+    }
+
+    if ($changed)
+    {
+
+        # alias applied: recreate header string
+        $header = join( $delim, @fields );
+    }
+
+    my %field_hash;
+    my $col = 1;
+    foreach my $field (@fields)
+    {
+        $field_hash{$field} = $col;
+        $col++;
+    }
+    close(INFILE);
+
+    print STDERR "keys: "
+      . join( ",", keys %field_hash ) . " "
+      . scalar( keys %field_hash ) . "\n"
+      if ($debug);
+
+    if ( scalar( keys %field_hash ) != scalar(@fields) )
+    {
+        warn "warning: file $filename contains duplicate columns";
+    }
+
+    return ( $header, \@fields, \%field_hash );
+}
+
+sub get_script_text
+{
+    my $comp_key1 = "\$" . join( "\"$join_delim\"\$", @key_cols1 );
+    my $comp_key2 = "\$" . join( "\"$join_delim\"\$", @key_cols2 );
+    my $key_list1 = join( ",", @key_cols1 );
+    my $key_list2 = join( ",", @key_cols2 );
+
+    # compute output columns (all minus key minus duplicates)
+
+    my $num_cols1 = ( scalar @$cols1 );
+    my $num_cols2 = ( scalar @$cols2 );
+
+    my @joined_cols;     # output column specification for unix join
+    my @joined_names;    # output header
+
+    if ( $ljoin and $rjoin )
+    {
+
+# full outer join: we need to save the keys from both files and later merge them, in case one of them is NA
+        push @joined_cols, "1.1";
+        push @joined_cols, "2.1";
+
+        # key columns will be first ones in output file
+        push @joined_names, ( map { $cols1->[ $_ - 1 ] } @key_cols1 );
+    }
+
+    # determine output columns
+
+    for ( my $i = 1 ; $i <= $num_cols1 ; $i++ )
+    {
+
+        #unless (defined $key_hash{$cols1->[$i-2]})
+        if ( ( !$rjoin ) or !defined $key_hash{ $cols1->[ $i - 1 ] } )
+        {
+            push @joined_cols, "1." . ( $i + 1 );
+            push @joined_names, $cols1->[ $i - 1 ];
+        }
+    }
+
+    foreach ( my $i = 1 ; $i <= $num_cols2 ; $i++ )
+    {
+        if ( ( $rjoin and !$ljoin )
+            or !defined $key_hash{ $cols2->[ $i - 1 ] } )
+        {
+            push @joined_cols, "2." . ( $i + 1 );
+            push @joined_names, $cols2->[ $i - 1 ];
+        }
+    }
+
+    # dedupe output header
+    my %h;
+    foreach my $name (@joined_names)
+    {
+        my $prev = $h{$name} || 0;
+        $h{$name} = $prev + 1;
+    }
+    my %cnt;
+    my @deduped_names;
+    foreach my $name (@joined_names)
+    {
+        if ( $h{$name} > 1 )
+        {
+
+            # duplicate found
+            my $prev = $cnt{$name} || 0;
+            $prev++;
+            warn
+"warning: the two input files contain duplicate non-key column: $name"
+              if ( $prev == 1 );
+            push @deduped_names, "$prev.$name";
+            $cnt{$name} = $prev;
+        }
+        else
+        {
+            push @deduped_names, $name;
+        }
+    }
+
+    my $joined_header = join $delim, @deduped_names;
+
+    $output_file = '/dev/stdout' if ( $output_file eq '' );
+
+    my $verbose_str = $verbose ? 'set -o verbose' : '';
+
+    # set delimiter in join options
+    $unix_join_opts .= "-t'$delim' -j1 ";
+
+    my $join_format = join $delim, @joined_cols;
+
+    # for full outer join, merge key column
+    my $merge_key = "";
+    if ( $ljoin and $rjoin )
+    {
+        $merge_key =
+"| awk -F'$delim' '{ if (\$1 == \"$null_str\") { split(\$2,a,\"$join_delim\"); } else  { split(\$1,a,\"$join_delim\"); }; print ";
+        for ( my $i = 0 ; $i <= $#key_cols1 ; $i++ )
+        {
+            $merge_key .= "a[" . ( $i + 1 ) . "]";
+            $merge_key .= "\"$delim\"" if ( $i < $#key_cols1 );
+        }
+
+        if ( $#joined_cols >= 2 )
+        {
+            my $other_columns = join "\"$delim\"",
+              ( map { "\$$_" } ( 3 .. ( $#joined_cols + 1 ) ) );
+            $merge_key .= "\"$delim\"$other_columns";
+        }
+
+        $merge_key .= "}'";
+    }
+
+    #chomp $join_format;
+    print STDERR '#>>>>>>>>>>>>' . $join_format . '<<<<<<<<<<<<<<' . "\n"
+      if ($debug);
+
+    $unix_join_opts .= "-o '$join_format' ";
+
+    # zipped?
+    my $cat_file1 = $gz_flag_1 ? "gunzip -c $filename1" : "cat $filename1";
+    my $cat_file2 = $gz_flag_2 ? "gunzip -c $filename2" : "cat $filename2";
+
+    my $script_test = <<END;
+#!/bin/env bash
+
+$verbose_str
+
+# file 1
+
+# check if already sorted
+$cat_file1 | tail -n +2 | awk -F'$delim' '{print $comp_key1}' | sort -t'$delim' -k$key_list1 -c 2>/dev/null
+unsorted=\$?
+
+# prepare input 1 for join
+if [ \$unsorted == 1 ]; then
+   $cat_file1 | tail -n +2 | awk -F'$delim' '{print $comp_key1"$delim"\$0}' | sort -S $mem_size -T "$tmp_dir" -t'$delim' -k1 > "$tmp_dir/filename1.$$.compkey"
+else
+   $cat_file1 | tail -n +2 | awk -F'$delim' '{print $comp_key1"$delim"\$0}' > "$tmp_dir/filename1.$$.compkey"
+fi
+
+# file 2
+
+# check if already sorted
+$cat_file2 | tail -n +2 | awk -F'$delim' '{print $comp_key2}' | sort -t'$delim' -k$key_list1 -c 2>/dev/null
+unsorted=\$?
+
+# prepare input 2 for join
+if [ \$unsorted == 1 ]; then
+   $cat_file2 | tail -n +2 | awk -F'$delim' '{print $comp_key2"$delim"\$0}' | sort -S $mem_size -T "$tmp_dir" -t'$delim' -k1 > "$tmp_dir/filename2.$$.compkey"
+else
+   $cat_file2 | tail -n +2 | awk -F'$delim' '{print $comp_key2"$delim"\$0}' > "$tmp_dir/filename2.$$.compkey"
+fi
+
+# header
+echo "$joined_header" > $output_file
+
+# perform join
+join $unix_join_opts "$tmp_dir/filename1.$$.compkey" "$tmp_dir/filename2.$$.compkey" $merge_key >> $output_file
+
+# clean up temporary files
+rm "$tmp_dir/filename1.$$.compkey" "$tmp_dir/filename2.$$.compkey"
+
+END
+
+    return $script_test;
+}
+
+sub main
+{
+    parse_options();
+
+    # read headers
+    ( $header1, $cols1, $col_hash1 ) = process_header( $filename1, $gz_flag_1 );
+    ( $header2, $cols2, $col_hash2 ) = process_header( $filename2, $gz_flag_2 );
+
+    # determine on which columns to join
+    find_join_keys();
+
+    my $script_test = get_script_text();
+
+    if ( !$exec_flag )
+    {
+        print $script_test;
+    }
+    else
+    {
+
+        # write to file
+        my $script_name = "join_script.$$.sh";
+        open SCRIPT, ">$script_name"
+          or die "can't open output file to write script";
+        print SCRIPT $script_test;
+        close SCRIPT;
+        system("chmod u+rwx $script_name");
+
+        # execute
+        system "./$script_name";
+
+        # remove file
+        exec "rm $script_name";
+    }
+}
+
+main;
+
+__END__
+
+
+=head1 NAME
+
+tbljoin - join two tabular files on specified columns
+
+=head1 SYNOPSIS
+
+B<tbljoin> S<[ B<-dehklmnortv> ] file1 file2>
+
+=head1 OPTIONS
+
+=over
+
+=item B<-d> <column delimiter>
+
+default: try any of '\t', ' ', ','
+
+=item B<-e>
+
+do not execute join; insted, print script to stdout
+
+=item B<-h>
+
+show this help message
+
+=item B<-k> <column spec>
+
+comma-delimited list of column names to join on. Without this option specified, join on all columns with the same name. To join columns with different names, use <nameFile1>=<nameFile2>.
+
+=item B<-l>
+
+left join (non-matching lines from first file are included)
+
+=item B<-lr>
+
+outer join (all non-matching lines are included; join default behavior: inner join)
+
+=item B<-m>
+
+print manual page
+
+=item B<-n> <null string>
+	
+value to be filled in for unmatched columns in outer join (default: 'NA')
+
+=item B<-o> <output file>
+
+default: STDOUT
+
+=item B<-r>
+
+right join (non-matching lines from second file included)
+
+=item B<-t> <directory>
+
+Directory to store intermediate temporary files (these can be very big for large input files!).
+Default: current directory
+
+=item B<-v>
+
+verbose
+
+=back
+
+=head1 DESCRIPTION
+
+Join two tabular files.
+
+This program translates the given command line options into a sequence of unix commands (notably 'join' and 'sort'), and immediately executes it (unless the opton '-e' is specified).
+
+In contrast to unix join, the input files don't have to be pre-sorted, and multiple join columns can be specified.
+
+Duplicate key columns are omitted; in 'l'-mode or if no join type option is specified, the key columns from the second file are removed (conversely for '-r').For full outer join ('-lr'), the key columns come first in the output.
+
+Assumption: the first line of the file contains the column names.
+
+=head1 EXAMPLES
+
+Suppose file1 is
+  name,street,house
+  zorro,desert road,5
+  john,main st,2
+  arthur,pan-galactic bypass,42
+  arthur,main st,15
+
+and file2 is
+  name,street,phone
+  john,main st,654-321
+  arthur,main st,121-212
+  john,round cir,123-456
+
+Then B<tbljoin file1 file2> gives
+  name,street,house,phone
+  arthur,main st,15,121-212
+  john,main st,2,654-321
+
+B<tbljoin -r file1 file2> gives
+  house,name,street,phone
+  42,arthur,main st,121-212
+  2,john,main st,654-321
+  NA,john,round cir,123-456
+
+and B<tbljoin -lrn'?' file1 file2> gives
+  name,street,house,phone
+  arthur,main st,15,121-212
+  arthur,pan-galactic bypass,42,?
+  john,main st,2,654-321
+  john,round cir,?,123-456
+  zorro,desert road,5,?
+
+=head1 AUTHOR
+
+Stefan Schroedl E<lt>stefan.schroedl@gmx.deE<gt>
+
+=head1 COPYRIGHT
+
+Copyright (c) 2009 by Stefan Schroedl
+
+=head1 LICENSE
+
+This package is free software; you can redistribute it and/or modify it
+under the terms of the "GNU General Public License Version 3".
+
+Please refer to the file "COPYING" for details.
+
+=head1 DISCLAIMER
+
+This package is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+See the "GNU General Public License" for more details.
+
+=cut
+

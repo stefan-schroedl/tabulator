@@ -1,0 +1,628 @@
+#!/bin/env perl
+
+use strict;
+use warnings;
+use Scalar::Util qw(looks_like_number);
+use Getopt::Std;
+use Pod::Usage;
+use FileHandle;
+use File::Basename;
+
+my $infile = new FileHandle;
+
+my @frac;
+my $cnt_line    = 0;
+my $target_col  = -1;
+my $target_name = '';
+my $filename    = '';
+my $opt_na      = '';
+my $delim       = "\t";
+my $max_strlen  = 0;
+my $few_values  = 10;
+my $opt_gz      = 0;      # gzipped?
+my $no_header   = 0;      # first line doesn't contain names
+
+my %opt;
+my @header_in;
+
+my @sum;
+my @sum2;
+my @sumxy;
+my @diffxy2;
+my @min_val;
+my @max_val;
+my @numeric;
+my @num_undef;
+my @ex_vals;
+
+sub pad
+{
+    my ( $string, $len ) = @_;
+    my $pad = ' ' x ( $len - length($string) );
+    return $pad . $string;
+}
+
+#
+# Command line options processing
+#
+sub parse_options
+{
+
+    #pod2usage(2) if $#ARGV <= -1;
+
+    my $opt_string = 'f:hk:d:mNn:';
+    Getopt::Std::getopts( $opt_string, \%opt ) or pod2usage(2);
+
+    pod2usage( { -exitval => 0, -verbose => 2 } ) if $opt{'m'};
+    pod2usage(1) if $opt{'h'};
+
+    if ( defined $opt{'n'} )
+    {
+        die "you cannot specify simultaneously -n and -N"
+          if ( defined $opt{'N'} );
+        $opt_na = $opt{'n'};
+    }
+    $opt_na     = 'NEG'     if ( defined $opt{'N'} );
+    $delim      = $opt{'d'} if ( defined $opt{'d'} );
+    $few_values = $opt{'f'} if ( defined $opt{'f'} );
+
+    foreach my $arg (@ARGV)
+    {
+        $filename = $arg unless ( $arg =~ m/^-/ );
+    }
+
+    if ( $filename eq '' )
+    {
+        if ( -t *STDIN )
+        {
+
+            # no arguments given
+            pod2usage(
+                {
+                    -exitval => 2,
+                    -verbose => 1,
+                    -message => 'no argument given'
+                }
+            );
+        }
+        $filename = '-';
+    }
+
+    if ( $filename =~ /\.gz$|\.Z$|\.zip$/ )
+    {
+
+        # a GZIP file
+        $opt_gz = 1;
+    }
+}
+
+# statistics functions
+
+my $PI   = 3.14159265;
+my $PiD2 = $PI / 2;
+
+sub studT
+{
+    my ( $t, $n ) = @_;
+    $t = abs($t);
+    my $w = $t / sqrt($n);
+    my $th = atan2( $w, 1 );
+    if ( $n == 1 ) { return 1 - $th / $PiD2; }
+    my $sth = sin($th);
+    my $cth = cos($th);
+    if ( ( ( $n / 2 ) != int( $n / 2 ) ) )
+    {
+        return 1 -
+          ( $th + $sth * $cth * stat_com( $cth * $cth, 2, $n - 3, -1 ) ) /
+          $PiD2;
+    }
+    else
+    {
+        return 1 - $sth * stat_com( $cth * $cth, 1, $n - 3, -1 );
+    }
+}
+
+sub stat_com
+{
+    my ( $q, $i, $j, $b ) = @_;
+
+    my $zz = 1;
+    my $z  = $zz;
+    my $k  = $i;
+    while ( $k <= $j )
+    {
+        $zz = $zz * $q * $k / ( $k - $b );
+        $z  = $z + $zz;
+        $k  = $k + 2;
+    }
+    return $z;
+}
+
+# guess file delimiter from header line
+sub guess_delim
+{
+    my $line = shift;
+
+    my $delim = "\t";
+
+    if ( $line =~ m/,/ )
+    {
+        $delim = ',';
+    }
+    elsif ( $line =~ m/\t/ )
+    {
+        $delim = "\t";
+    }
+    elsif ( $line =~ m/ / )
+    {
+        $delim = ' ';
+    }
+    elsif ( $line =~ m// )
+    {
+        $delim = '';
+    }
+    return $delim;
+}
+
+# read and store column names
+sub process_header
+{
+    $infile->open( $opt_gz ? "gunzip -c $filename |" : $filename )
+      or die "Couldn't open '$filename'";
+
+    ## Get field names from first line
+    my $header = <$infile>;
+
+    $header =~ s/\s+$//g;
+
+    $delim = guess_delim($header) unless $opt{'d'};
+
+    my @fields = map { s/^\s+//; s/\s$//; lc($_); } split( /$delim/, $header );
+
+    @header_in = @fields;
+
+    # check if first line is indeed header
+
+    my @alt_fields;
+    my $cnt = 0;
+    foreach my $field (@fields)
+    {
+        $cnt++;
+        if ( looks_like_number($field) )
+        {
+            $no_header = 1;
+        }
+        push @alt_fields, $cnt;
+    }
+
+    @fields = @alt_fields if ($no_header);    # use col idx instead of name
+
+    $max_strlen = 0;
+    foreach my $field (@fields)
+    {
+        my $len = length($field);
+        $max_strlen = $len if ( $len > $max_strlen );
+    }
+
+    $target_col  = -1;
+    $target_name = "";
+
+    if ( defined $opt{'k'} )
+    {
+        $target_name = $opt{'k'};
+        $target_name = lc($target_name);
+    }
+
+    # initialize stats
+    for ( my $i = 0 ; $i <= $#fields ; $i++ )
+    {
+        $target_col = $i if ( $fields[$i] eq $target_name );
+        $sum[$i]    = 0;
+        $sum2[$i]   = 0;
+        $min_val[$i]   = 1e30;
+        $max_val[$i]   = -1e30;
+        $numeric[$i]   = 0;
+        $num_undef[$i] = 0;
+        $frac[$i]      = 0;
+        my %empty;
+        $ex_vals[$i] = \%empty;
+    }
+
+    #close($infile);
+
+    if ( defined $opt{'k'} and $target_col == -1 )
+    {
+        die "error: target column not found: $target_name";
+    }
+    return $max_strlen;
+}
+
+sub process_file
+{
+
+    #open(INFILE, $filename) or die "Couldn't open '$filename'";
+
+#$infile->open( $opt_gz ? "gunzip -c $filename |" : $filename ) or die "Couldn't open '$filename'";
+#my $dummy = <$infile> unless $no_header; # header
+
+    $cnt_line = 0;
+
+    while (<$infile>)
+    {
+        $cnt_line++;
+
+        # fill result from line
+        chomp;
+
+        my @vals = split( /$delim/, $_ );
+        if ( scalar(@vals) != scalar(@header_in) )
+        {
+            print STDERR "ERROR: number of header fields ("
+              . scalar(@header_in)
+              . ") in line $cnt_line != number of data fields ("
+              . scalar(@vals) . ")\n";
+            print STDERR join( " / ", @vals ) . "\n";
+
+            #exit;
+            next;
+        }
+
+        # if target column is not numeric, skip entire line
+        my $skip = 0;
+        if ( $target_col != -1 )
+        {
+            my $field = $vals[$target_col];
+            $field =~ s/\s+$//g;
+            $field =~ s/^\s+//g;
+
+            if ( looks_like_number($field) )
+            {
+                $skip = (
+                    $opt_na eq ''
+                    ? 0
+                    : ( $opt_na eq 'NEG'
+                        ? ( $field < 0 ? 1 : 0 )
+                        : ( $field == $opt_na ? 1 : 0 ) )
+                );
+            }
+            else
+            {
+                $skip = 1;
+            }
+        }
+
+        for ( my $i = 0 ; $i <= $#vals ; $i++ )
+        {
+            my $field = $vals[$i];
+            $field =~ s/\s+$//g;
+            $field =~ s/^\s+//g;
+
+            if ( looks_like_number($field) )
+            {
+                $numeric[$i]++;
+
+                my $na = (
+                    $opt_na eq ''
+                    ? 0
+                    : ( $opt_na eq 'NEG'
+                        ? ( $field < 0 ? 1 : 0 )
+                        : ( $field == $opt_na ? 1 : 0 ) )
+                );
+                if ( $na == 1 )
+                {
+                    $num_undef[$i]++;
+                }
+                else
+                {
+                    $min_val[$i] = $field if ( $min_val[$i] > $field );
+                    $max_val[$i] = $field if ( $max_val[$i] < $field );
+
+                    $sum[$i]  += $field;
+                    $sum2[$i] += $field * $field;
+                    $frac[$i]++ if ( int($field) != $field );
+                    if ( $target_col != -1
+                        and looks_like_number( $vals[$target_col] ) )
+                    {
+                        $sumxy[$i]   += $field * $vals[$target_col];
+                        $diffxy2[$i] += ( $field - $vals[$target_col] )**2;
+                    }
+                }
+            }
+            my $hash = $ex_vals[$i];
+            $hash->{$field} = 1 if ( scalar( keys %$hash ) < $few_values );
+        }
+    }
+    close($infile);
+}
+
+sub print_report
+{
+    my $hi = ($no_header) ? ', no header line' : '';
+    if ( $target_col != -1 )
+    {
+        my $tstr = "target column: $target_name";
+        $hi = ( $hi eq '' ) ? ", $tstr" : "$hi, $tstr";
+    }
+
+    print "summarizing $filename ($cnt_line lines$hi)\n";
+
+    # construct header
+
+    my $header =
+      "field\t" . pad( "name", $max_strlen ) . "\t      type\t char%\tuniq>=\t";
+    if ( $opt_na ne "" )
+    {
+        my $tmp = "undef%\t";
+        $header = $header . $tmp;
+    }
+    my $tmp = "     min\t     max\t     avg\t     std";
+    $header = $header . $tmp;
+
+    if ( $target_col != -1 )
+    {
+
+        # correlation stats
+        my $tmp = "\tmse     \tcorr    \t   prob%\n";
+        $header = $header . $tmp;
+    }
+    else
+    {
+        $header = $header . "\n";
+    }
+
+    print $header;
+
+    for ( my $i = 0 ; $i <= $#header_in ; $i++ )
+    {
+        my $num_def = $numeric[$i];
+
+        my $type = 'float';
+        if ( $num_def <= 0 )
+        {
+            $type = 'char';
+        }
+        else
+        {
+
+            # at least one number detected
+            $type = 'int' if ( $frac[$i] == 0 );
+
+            if ( $opt_na ne '' )
+            {
+                $num_def -= $num_undef[$i];
+
+                # count characters as undefined (e.g, "NA")
+                #$num_undef[$i] += ($cnt_line - $numeric[$i]);
+            }
+
+            $type = $type . '/char' if ( $numeric[$i] < $cnt_line );
+        }
+
+        if ( $num_def > 0 )
+        {
+
+            # field with some numeric values
+            my $output = sprintf(
+                "%3d\t%${max_strlen}s\t%10s\t%6.1d\t%6d\t",
+                ( $i + 1 ),
+                $header_in[$i], $type,
+                100 * ( $cnt_line - $numeric[$i] ) / $cnt_line,
+                scalar( keys %{ $ex_vals[$i] } )
+            );
+            if ( $opt_na ne "" )
+            {
+                my $tmp =
+                  sprintf( "%6.1d\t", 100 * $num_undef[$i] / $cnt_line );
+                $output = $output . $tmp;
+            }
+            my $maxfmt = ( $frac[$i] == 0 ) ? '%8d' : '%8.3g';
+            my $tmp = sprintf(
+                "${maxfmt}\t${maxfmt}\t%8.3g\t%8.3g",
+                $min_val[$i],
+                $max_val[$i],
+                $sum[$i] / $num_def,
+                sqrt(
+                    abs( ( $sum2[$i] - $sum[$i] * $sum[$i] / $num_def ) ) /
+                      $num_def
+                )
+            );
+            $output = $output . $tmp;
+
+            if ( $target_col != -1 )
+            {
+                my $mse = sqrt( $diffxy2[$i] / $num_def );
+                my $num = $sumxy[$i] - $sum[$i] * $sum[$target_col] / $num_def;
+                my $denom =
+                  ( $sum2[$i] - $sum[$i] * $sum[$i] / $num_def ) *
+                  ( $sum2[$target_col] -
+                      $sum[$target_col] * $sum[$target_col] / $num_def );
+                my $corr_coeff = $denom <= 0 ? 0 : $num / sqrt($denom);
+                my $prob = 0;
+                if ( $corr_coeff * $corr_coeff < 1 and $num_def >= 3 )
+                {
+                    my $t =
+                      $corr_coeff * $corr_coeff == 1
+                      ? 1e20
+                      : $corr_coeff *
+                      sqrt( $num_def - 2 ) /
+                      sqrt( 1 - $corr_coeff * $corr_coeff );
+                    $prob = studT( $t, $num_def - 2 );
+                }
+                $tmp = sprintf( "\t%8.3g\t%8.3f\t%8.2f\n",
+                    $mse, $corr_coeff, 100 * $prob );
+                $output = $output . $tmp;
+            }
+            else
+            {
+                $output = $output . "\n";
+            }
+            print $output;
+        }
+        else
+        {
+
+            # pure character field
+            my $output = sprintf(
+                "%3d\t%${max_strlen}s\t%10s\t%6.1d\t%6d",
+                ( $i + 1 ),
+                $header_in[$i], $type, 100, scalar( keys %{ $ex_vals[$i] } )
+            );
+
+            # if few values, print them out
+            my $num_vals = scalar( keys %{ $ex_vals[$i] } );
+            if ( $num_vals <= $few_values )
+            {
+                my @list = map sprintf( "%.20s", $_ ),
+                  ( sort keys %{ $ex_vals[$i] } );
+                $output .= "\t[" . join( '; ', @list ) . "]";
+            }
+            print "$output\n";
+        }
+    }
+}
+
+sub main
+{
+
+    # parse options
+    parse_options();
+
+    binmode STDOUT, ':utf8';
+
+    # gather columns names
+    process_header();
+
+    # process lines in input file
+    process_file();
+
+    print_report();
+}
+
+main;
+
+__END__
+
+=head1 NAME
+
+tbldesc - describe columns in tabular file
+
+=head1 SYNOPSIS
+
+B<tbldesc>	S<[ B<-dfhkmnN> ] file >
+
+=head1 OPTIONS
+
+=over
+
+=item B<-d> 
+
+column delimiter [Default: try any of '\t', ' ', ',']
+
+=item B<-f>
+
+count number of unique values up to this number [default: 10]
+
+=item B<-h>
+
+Show this help message.
+
+=item B<-k>
+
+target column for correlation coefficient
+
+=item B<-m>
+
+print manual page
+
+=item B<-n>
+
+number meaning 'undefined'
+
+=item B<-N>
+
+count all negative values as undefined
+
+=back
+
+=head1 DESCRIPTION
+
+read tabular data from a file, print distribution statistics:
+
+=over
+
+=item B<column number>
+
+=item B<type> [float, int, char, or combinations of these]
+
+=item B<char%> percentage of non-numeric values
+
+=item B<uniq> min(number of distinct values, '-f' option)
+
+=item B<undef%> percentage of non-numeric indicator ('-n' or '-N' option)
+
+=item B<min> minimum
+
+=item B<max> maximum
+
+=item B<avg> average
+
+=item B<std> standard deviation
+
+=item B<mse> mean square error for target column ('-k' option)
+
+=item B<corr> Pearson correlation with target column ('-k' option)
+
+=item B<prob%> Student-t statistic with target column ('-k' option)
+
+=back
+
+Non-numeric or undefined values are ignored in the statistics.
+
+With the -k option, also compute linear correlation coefficient and Student-t statistic with the specified target column. Note: if the target value is undefined, the entire line is ignored.
+
+For pure character fields with fewer unique values than some specified number ('-f' option), these values are enumerated.
+
+Assumption: the first line of the file contains the column names.
+
+=head1 EXAMPLE
+
+Suppose file is
+  name,house_nr,height,shoe_size
+  arthur,42,6.1,11.5
+  berta,101,5.5,8
+  chris,333,5.9,10
+  don,77,5.9,12.5
+
+Then B<tbldesc file> prints:
+  summarizing file_desc (4 lines, target column: shoe_size)
+  field name     type char% uniq min max avg  std    mse  corr   prob%
+    1 name       char 100    4 [arthur; berta; chris; don]
+    2 house_nr   int    0    4 42   333 138   114    172   -0.287 71.25
+    3 height     float  0    3 5.5  6.1 5.85  0.218  4.89   0.812 18.82
+    4 shoe_size  float  0    4 8   12.5 10.5  1.7     0.0   1.0    0.00
+
+
+=head1 AUTHOR
+
+Stefan Schroedl E<lt>stefan.schroedl@gmx.deE<gt>
+
+=head1 COPYRIGHT
+
+Copyright (c) 2009 by Stefan Schroedl
+
+=head1 LICENSE
+
+This package is free software; you can redistribute it and/or modify it
+under the terms of the "GNU General Public License Version 3".
+
+Please refer to the file "COPYING" for details.
+
+=head1 DISCLAIMER
+
+This package is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+See the "GNU General Public License" for more details.
+
+=cut

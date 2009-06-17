@@ -1,0 +1,143 @@
+#! /usr/bin/env python
+
+## 
+## Copyright (C) 2009  Stefan Schroedl (stefan.schroedl@gmx.de)
+## 
+## This program is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## any later version.
+## 
+## This program is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+## 
+## You should have received a copy of the GNU General Public License
+## along with this program.  If not, see <http://www.gnu.org/licenses/>
+
+import os
+import sys
+from string import *
+import math
+from optparse import OptionParser
+
+
+# guess separator from header
+def guessDelim(h):
+    if (h.find('\t')!=-1):
+        return '\t'
+    elif (h.find('')!=-1):
+        return ''
+    elif (h.find(',')!=-1):
+        return ','
+    elif (h.find(' ')!=-1):
+        return ' '
+    return ''
+
+def isNan(num):
+    return num != num
+
+def isNumeric(x):
+    try:
+        float(x)
+        return True
+    except Exception:
+        return False
+ 
+def format(x,prec, raw):
+    if (raw):
+        return x
+    try:
+        xNum = float(x)
+    except ValueError:
+        return x # no number
+    if isNan(xNum):
+        return x  # no number, don't apply formatting
+    # heuristic guess
+    if (abs(xNum)>1e7 or abs(xNum)<1e-7):
+        # exponential format
+        return ("%g" % (xNum))
+    isInt = (math.floor(xNum) == xNum)
+    if (isInt):
+        return ("%d" % int(xNum))
+    # right justified
+    return ("%.*f" % (prec,xNum))
+
+
+def main():
+    usage = 'usage: %prog -[abBdhpr] file'
+    description = """format tabular data into latex format"""
+    parser = OptionParser(usage=usage,description=description)
+    parser.add_option('-a', '--alignment', dest='align',
+                      help =
+                      """alignment spec for all columns. Default: 'r' """,
+                      default='r')
+    parser.add_option('-b', '--boldheader', dest='boldheader',
+                      help ="""bold header""",
+                      action='store_true', default=False)
+    parser.add_option('-B', '--boldfirst', dest='boldfirst',
+                      help ="""bold first column""",
+                      action='store_true', default=False)
+    parser.add_option('-d', '--delimiter', dest='delim',
+                      help =
+                      """column delimiter in input file.
+                      Try to guess if unspecified""")
+    parser.add_option('-p', '--precision', dest='prec',
+                      help ="""number of digits for floating point formatting""",
+                      default="2")
+    parser.add_option('-r', '--raw', dest='raw',
+                      help ="""do not attempt to format numbers""",
+                      action='store_true',
+                      default=False)
+ 
+    (opt, args) = parser.parse_args()
+    
+    if len(args) != 1:
+        print usage
+        sys.exit()
+    infile = open(args[0], 'r')
+    firstLine = True
+
+    prec = int(opt.prec)
+    raw = opt.raw
+   
+    print '''\\begin{table}
+\\begin{center}'''
+    while 1:
+        line = infile.readline()
+        if not line: break
+        line = line.strip() # remove newline
+      
+        lineEmpty = (len(line) == 0)
+        if (lineEmpty):
+            if (not firstLine):
+                print ""
+                firstLine = True
+        else:
+            if (opt.delim):
+                delim = opt.delim
+            else:
+                delim = guessDelim(line)
+            entry = line.split(delim)
+            if (firstLine):
+                print "\\begin{tabular}[c]{|" + ((opt.align + "|") * len(entry)) + "} \\hline"
+                if opt.boldheader:
+                    lineOut = "{\\bf " + format(entry[0],prec,raw) + '} & ' + ' & '.join(["{\\bf " + format(x,prec,raw) + "}" for x in entry[1:]]) + '\\\\ \\hline'
+                else:
+                    lineOut = format(entry[0],prec,raw) + ' & ' + ' & '.join([format(x,prec,raw) for x in entry[1:]]) + '\\\\ \\hline'
+                firstLine = False
+            else:
+                if (opt.boldfirst):
+                    lineOut = '{\\bf ' + format(entry[0],prec,raw) + '} & ' + ' & '.join([format(x,prec,raw) for x in entry[1:]]) + '\\\\ '
+                else:
+                    lineOut = format(entry[0],prec,raw) + ' & ' + ' & '.join([format(x,prec,raw) for x in entry[1:]]) + '\\\\ '
+            print lineOut
+    print '''\\hline
+\\end{tabular}
+\\end{center}
+\\caption{\label{}}
+\\end{table} '''
+
+if(__name__ == "__main__"):
+    main()

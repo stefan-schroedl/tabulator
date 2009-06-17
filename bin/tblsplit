@@ -1,0 +1,380 @@
+#! /usr/bin/env perl
+
+use strict;
+use warnings;
+
+use Getopt::Std;
+use Pod::Usage;
+use Scalar::Util qw(looks_like_number);
+use FileHandle;
+use File::Basename;
+
+my $infile        = new FileHandle;
+my $filename      = '';               # name of input file
+my $output_file   = 'STDOUT';         # output name when processing STDOUT
+my %output_files  = ();               # output part files
+my @cols_key      = ();               # key column indices
+my @cols_nonkey   = ();               # nonkey column indices
+my @names_key     = ();               # column names to split on
+my @header_in     = ();               # header in input file
+my @header_out    = ();               # header for output files as array
+my $delim         = "\t";             # input file delimiter
+my $opt_drop_keys = 0;                # option to remove key column from output
+my $opt_header_subscript = 0;         # option to subscript output column name
+my %opt                  = ();        # options hash
+my $no_header            = 0;         # first line doesn't contain names
+my $opt_gz               = 0;         # gzipped?
+
+sub parse_options()
+{
+    my $opt_string = 'dihk:o:mr';
+
+    Getopt::Std::getopts( $opt_string, \%opt ) or pod2usage(2);
+
+    pod2usage( { -exitval => 0, -verbose => 2 } ) if $opt{'m'};
+
+    pod2usage(1) if $opt{'h'};
+
+    $opt_drop_keys        = 1         if $opt{'r'};
+    $opt_header_subscript = 1         if $opt{'i'};
+    $delim                = $opt{'d'} if ( defined $opt{'d'} );
+
+    if ( defined $opt{'k'} )
+    {
+        @names_key = split ',', $opt{'k'};
+    }
+    else
+    {
+        print "no split column specified, exiting\n";
+        pod2usage(2);
+    }
+
+    foreach my $arg (@ARGV)
+    {
+        $filename = $arg unless ( $arg =~ m/^-/ );
+    }
+
+    $filename = '-' unless ( $filename ne '' );
+
+    if ( $filename =~ /\.gz$|\.Z$|\.zip$/ )
+    {    # a GZIP file
+        $opt_gz = 1;
+    }
+
+    if ( defined $opt{'o'} )
+    {
+        $output_file = $opt{'o'};
+    }
+    else
+    {
+        $output_file =
+          ( $filename eq '-' ) ? 'STDOUT' : basename( $filename, ".gz" );
+    }
+
+    pod2usage(2) if ( $#names_key == -1 );
+}
+
+sub guess_delim
+{
+    my $header = shift;
+    if ( $header =~ m// )
+    {
+        $delim = '';
+    }
+    elsif ( $header =~ m/,/ )
+    {
+        $delim = ',';
+    }
+    elsif ( $header =~ m/\t/ )
+    {
+        $delim = "\t";
+    }
+    elsif ( $header =~ m/ / )
+    {
+        $delim = ' ';
+    }
+    return $delim;
+}
+
+# read and store column names
+sub process_header
+{
+    my $file = shift;
+
+    #open(INFILE, $file) or die "Couldn't open '$file'";
+
+    $infile->open( $opt_gz ? "gunzip -c $file |" : $file )
+      or die "Couldn't open '$file'";
+
+    ## Get field names from first line
+    my $header = <$infile>;
+
+    #close($infile);
+
+    chomp($header);
+
+    $header =~ s/\s+$//g;
+    $delim = guess_delim($header) unless ( defined( $opt{'d'} ) );
+    my @fields = map { s/^\s+//; s/\s$//; lc($_); } split( $delim, $header );
+
+    @header_in = @fields;
+
+    # check if first line is indeed header
+
+    my @alt_fields;
+    my $cnt = 0;
+    foreach my $field (@fields)
+    {
+        $cnt++;
+        if ( looks_like_number($field) )
+        {
+            $no_header = 1;
+        }
+        push @alt_fields, $cnt;
+    }
+
+    if ($no_header)
+    {
+
+        # use col idx instead of name
+        @fields = @alt_fields;
+        $header = join( $delim, @fields ) . "\n";
+    }
+
+    # find key columns
+    foreach my $name_key (@names_key)
+    {
+        my $found = 0;
+        for ( my $i = 0 ; $i < scalar(@fields) ; $i++ )
+        {
+            if ( $fields[$i] eq $name_key )
+            {
+                push @cols_key, $i;
+                $found = 1;
+            }
+            else
+            {
+                push @cols_nonkey, $i;
+            }
+        }
+        die "error: key column not found: $name_key" unless ($found);
+    }
+
+    # construct output header
+
+    if ($opt_drop_keys)
+    {
+        @header_out = map { $fields[$_] } @cols_nonkey;
+    }
+    else
+    {
+
+        # same header
+        @header_out = @fields;
+    }
+}
+
+sub process_file
+{
+    my $file = shift;
+
+    my $count_lines = ( $no_header ? 1 : 0 );
+
+    while (1)
+    {
+        if ( $no_header and $count_lines == 1 )
+        {
+
+            # first line read but not yet processed
+            $_ = join $delim, @header_in;
+        }
+        else
+        {
+            ( defined( $_ = <$infile> ) ) or last;
+        }
+
+        $count_lines++;
+
+        # fill result from line
+        chomp;
+        my @vals = split $delim, $_;
+        if ( $#vals != $#header_in )
+        {
+            die "ERROR: number of header fields ("
+              . scalar(@header_in)
+              . ") in line $count_lines != number of data fields ("
+              . scalar(@header_in) . ")";
+        }
+
+        my @key_val_desc = map { $header_in[$_] . "=" . $vals[$_] } @cols_key;
+        my $key_val_desc = join '_', @key_val_desc;
+        my @val_desc = map { $vals[$_] } @cols_key;
+        my $val_desc = join '_', @val_desc;
+        my $handle = $output_files{$val_desc};
+
+        unless ( defined $handle )
+        {
+
+            # previously unseen keys - create new file
+            my $subfile = $output_file . ".select." . $key_val_desc;
+            $handle = new FileHandle;
+            $handle->open(
+                $opt_gz ? " | gzip -c > $subfile.gz |" : "> $subfile" );
+            $output_files{$val_desc} = $handle;
+
+            # print header
+            unless ($no_header)
+            {
+                my $header_out;
+                if ($opt_header_subscript)
+                {
+
+                    # append subscript
+                    my @header_subs = map { $_ . "_$val_desc" } @header_out;
+                    $header_out = join( $delim, @header_subs );
+                }
+                else
+                {
+                    $header_out = join( $delim, @header_out );
+                }
+                print $handle "$header_out\n";
+            }
+        }
+
+        # print column values
+        if ($opt_drop_keys)
+        {
+            my @fields = map { $vals[$_] } @cols_nonkey;
+            my $line_out = join( $delim, @fields ) . "\n";
+            print $handle $line_out;
+        }
+        else
+        {
+            print $handle join( $delim, @vals ) . "\n";
+        }
+    }
+
+    close $infile;
+
+    # close all output files
+    foreach my $handle ( values %output_files )
+    {
+        $handle->close;
+    }
+}
+
+sub main
+{
+
+    # interpret command line options
+    parse_options();
+
+    # parse first line of file
+    binmode STDOUT, ':utf8';
+    process_header($filename);
+
+    # process lines in input file
+    process_file($filename);
+}
+
+main;
+
+__END__
+
+=head1 NAME
+
+tblsplit - split a file into several subfiles based on the value of a key column
+
+=head1 SYNOPSIS
+
+B<tblsplit>  S<[ B<dihkmor> ] file>
+
+=head1 OPTIONS
+
+=over
+
+=item B<-d> <column delimiter>
+
+default: try any of '\t', ' ', ','
+
+=item B<-i>
+
+subscript output column names by split value
+
+=item B<-k> <column spec>
+
+column to split on
+
+=item B<-h>
+
+show this help message
+
+=item B<-m>
+
+print manual page
+
+
+=item B<-o>
+
+output name (default: input name)
+
+=item B<-r>
+
+exclude split column from output
+
+=back
+
+=head1 DESCRIPTION
+
+Split a file into several subfiles based on the value of a key column.
+
+Assumption: the first line of the file contains the column names.
+
+=head1 EXAMPLE
+
+Suppose file is
+
+ continent,country
+ americas,us
+ americas,mx
+ europe,de
+ europe,fr
+
+Then B<tblsplit -rk'continent' file> generates two files:
+
+B<file.select.continent=americas:>
+ country
+ us
+ mx
+
+and B<file.select.continent=europe:>
+ country
+ de
+ fr
+
+
+=head1 AUTHOR
+
+Stefan Schroedl E<lt>stefan.schroedl@gmx.deE<gt>
+
+=head1 COPYRIGHT
+
+Copyright (c) 2009 by Stefan Schroedl
+
+=head1 LICENSE
+
+This package is free software; you can redistribute it and/or modify it
+under the terms of the "GNU General Public License Version 3".
+
+Please refer to the file "COPYING" for details.
+
+=head1 DISCLAIMER
+
+This package is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+See the "GNU General Public License" for more details.
+
+=cut
+

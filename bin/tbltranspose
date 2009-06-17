@@ -1,0 +1,159 @@
+#!/bin/env perl
+use strict;
+use warnings;
+use Getopt::Std;
+use Pod::Usage;
+
+my @matrix;
+my $matrix_width  = -1;
+my $matrix_height = 0;
+my $delim         = '\t';
+my %opt           = ();
+
+# guess separator
+sub guess_delim
+{
+    my ($line) = @_;
+
+    my $delim = "\t";
+
+    if ( $line =~ m/,/ )
+    {
+        $delim = ',';
+    }
+    elsif ( $line =~ m/\t/ )
+    {
+        $delim = "\t";
+    }
+    elsif ( $line =~ m/ / )
+    {
+        $delim = ' ';
+    }
+    elsif ( $line =~ m// )
+    {
+        $delim = '';
+    }
+    return $delim;
+}
+
+sub main
+{
+
+    # options
+    my $opt_string = 'd:hm';
+    Getopt::Std::getopts( $opt_string, \%opt ) or pod2usage(2);
+    pod2usage( { -exitval => 0, -verbose => 2 } ) if $opt{'m'};
+    pod2usage(1) if $opt{'h'};
+
+    my $filename = '';
+
+    foreach my $arg (@ARGV)
+    {
+        $filename = $arg unless ( $arg =~ m/^-/ );
+    }
+
+    if ( $filename eq '' )
+    {
+        if ( -t *STDIN )
+        {
+
+            # no arguments given
+            pod2usage(
+                {
+                    -exitval => 2,
+                    -verbose => 1,
+                    -message => 'no argument given'
+                }
+            );
+        }
+        $filename = '-';
+    }
+
+    open( INFILE, $filename )  or die "Can't open '$filename': $!";
+
+    # read file
+    foreach (<INFILE>)
+    {
+        chomp;
+        $delim = guess_delim($_)
+          if ( ( !$opt{'d'} ) && $matrix_height == 0 );    # first line
+        my @row = split( /$delim/, $_ );
+        $matrix_width = scalar(@row) if ( $matrix_width < scalar(@row) );
+        push @matrix, \@row;
+        $matrix_height++;
+    }
+
+    # output
+    foreach my $i ( 0 .. ( $matrix_width - 1 ) )
+    {
+        my @transposed = ();
+        foreach my $j ( 0 .. ( $matrix_height - 1 ) )
+        {
+            my $element =
+              ( defined $matrix[$j]->[$i] ? $matrix[$j]->[$i] : 'NA' );
+            push @transposed, $element;
+        }
+
+        print join( $delim, @transposed ) . "\n";
+    }
+
+}
+
+main;
+
+__END__
+
+=head1 NAME
+
+tbltranspose - transpose the rows and columns of a tabular file
+
+=head1 SYNOPSIS
+
+B<tbltranspose>	S<[ B<-dhm> ] file>
+
+=head1 OPTIONS
+
+=over
+
+=item B<-d> <column delimiter>
+
+default: try any of '\t', ' ', ','
+
+=item B<-h>
+
+Show this help message
+
+=item B<-m>
+
+print manual page
+
+=back
+
+=head1 DESCRIPTION
+
+Transpose the rows and columns of a tabular file.
+
+=head1 AUTHOR
+
+Stefan Schroedl E<lt>stefan.schroedl@gmx.deE<gt>
+
+=head1 COPYRIGHT
+
+Copyright (c) 2009 by Stefan Schroedl
+
+=head1 LICENSE
+
+This package is free software; you can redistribute it and/or modify it
+under the terms of the "GNU General Public License Version 3".
+
+Please refer to the file "COPYING" for details.
+
+=head1 DISCLAIMER
+
+This package is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+See the "GNU General Public License" for more details.
+
+=cut

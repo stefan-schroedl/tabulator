@@ -1,0 +1,480 @@
+#! /usr/bin/env perl
+
+use Getopt::Std;
+use Pod::Usage;
+use FileHandle;
+
+use warnings;
+use strict;
+
+my $infile = new FileHandle;
+
+my %opt            = ();
+my $exec_flag      = 1;
+my $regex_flag     = 0;
+my $inverse_flag   = 0;
+my $list_flag      = 0;
+my $verbose        = 0;
+my $gz_flag        = 0;      # gzipped?
+my $key_spec       = '.*';
+my $cond_spec      = '';
+my $filename       = '';
+my $header         = '';
+my $num_input_cols = 0;
+my @names_in       = ();
+my %names_in_hash  = ();
+my %rhs            = ();
+my @cols_out       = ();
+my @names_out      = ();
+my @vals_out       = ();
+my $delim          = "\t";
+
+# replace columns by index
+
+sub replace_column_names
+{
+    my $input = shift;
+
+    # must replace longest names first, possible string overlap!
+    my @sorted_names = sort { length($b) <=> length($a) } @names_in;
+    foreach my $name (@sorted_names)
+    {
+        $input =~ s/$name/\$$names_in_hash{$name}/g;
+    }
+    return $input;
+}
+
+sub parse_options()
+{
+    my $opt_string = 'c:d:ehik:lmrs:v';
+
+    Getopt::Std::getopts( "$opt_string", \%opt ) or pod2usage(2);
+
+    pod2usage( { -exitval => 0, -verbose => 2 } ) if $opt{'m'};
+
+    pod2usage(1) if $opt{'h'};
+
+    $exec_flag    = 0         if ( $opt{'e'} );
+    $inverse_flag = 1         if ( $opt{'i'} );
+    $list_flag    = 1         if ( $opt{'l'} );
+    $regex_flag   = 1         if ( $opt{'r'} );
+    $cond_spec    = $opt{'s'} if ( $opt{'s'} );
+    $delim        = $opt{'d'} if ( $opt{'d'} );
+    $verbose      = 1         if ( $opt{'v'} );
+    $key_spec     = $opt{'k'} if ( defined $opt{'k'} );
+
+    $key_spec = '.*' if $key_spec eq '*';    # allow specification '*'
+
+    foreach my $arg (@ARGV)
+    {
+        $filename = $arg unless ( $arg =~ m/^-/ );
+    }
+
+    if ( $filename eq '' )
+    {
+
+        # try to read stdin
+        if ( -t *STDIN )
+        {
+
+            # no arguments given
+            pod2usage(
+                {
+                    -exitval => 2,
+                    -verbose => 1,
+                    -message => 'no argument given'
+                }
+            );
+        }
+        $filename = '-';
+    }
+
+    if ( $filename =~ /\.gz$|\.Z$|\.zip$/ )
+    {    # a GZIP file
+        $gz_flag = 1;
+    }
+
+    die "option -i can only be specified together with -r"
+      if ( $inverse_flag and ( !$regex_flag ) );
+}
+
+sub parse_derived_option
+{
+
+    # columns with derived expressions: treat as additional columns after input
+
+    my $string = $opt{'c'};
+    return unless ( defined $string );    # no compute expression defined
+
+    my @assign = split /,/, $string;
+
+    for ( my $i = 0 ; $i <= $#assign ; $i++ )
+    {
+        my ( $name, $val ) = split( /=/, $assign[$i], 2 );
+
+        pod2usage(2) if ( ( !defined $val ) or ( !defined $name ) );
+
+        # substitute column names
+        $val = replace_column_names($val);
+
+        # add brackets, just in case
+        $val = "($val)" unless ( $val =~ m/\(.*\)/ );
+
+        # 'append' columns after input file columns
+        push @names_in, $name;
+        my $pos = $num_input_cols + $i + 1;
+        $names_in_hash{$name} = $pos;
+        $rhs{$name}           = $val;
+    }
+}
+
+sub guess_delim
+{
+    my $line = shift;
+
+    my $delim = "\t";
+
+    if ( $line =~ m/,/ )
+    {
+        $delim = ',';
+    }
+    elsif ( $line =~ m/\t/ )
+    {
+        $delim = "\t";
+    }
+    elsif ( $line =~ m/ / )
+    {
+        $delim = ' ';
+    }
+    elsif ( $line =~ m// )
+    {
+        $delim = '';
+    }
+    return $delim;
+}
+
+# read and store column names
+sub process_header
+{
+    my ( $filename, $field_arr, $field_hash, $rhs ) = @_;
+
+    $infile->open( $gz_flag ? "gunzip -c $filename |" : $filename )
+      or die "Can't open '$filename': $!";
+
+    ## Get field names from first line
+    my $header = <$infile>;
+    $header =~ s/\s+$//g;
+
+    $delim = guess_delim($header) unless ( $opt{'d'} );
+
+    @{$field_arr} = split $delim, $header;
+    %{$field_hash} = ();
+    my $col = 1;
+
+    foreach my $field ( @{$field_arr} )
+    {
+        $field_hash->{$field} = $col;
+        $rhs->{$field}        = "\$$col";
+        $col++;
+    }
+
+    $num_input_cols = $col - 1;
+
+    return $header;
+}
+
+sub get_script_text
+{
+    my $in_pipe = '';
+    if ( $filename ne '-' )
+    {
+
+        # user specified file
+        $in_pipe = $gz_flag ? "gunzip -c $filename | " : "cat $filename |";
+    }
+
+    # select condition
+    my $cond_exp = '(NR>1)';
+
+    if ( $opt{'s'} )
+    {
+
+        # substitute column indices in expression
+        $cond_exp = $cond_spec;
+        $cond_exp = replace_column_names($cond_exp);
+        $cond_exp = "(NR>1 && ($cond_exp))";
+    }
+
+    # test if output order = input order
+    my $sequential = 1;
+    if ( ( !$opt{'s'} ) and ( !$opt{'c'} ) )
+    {
+        for my $i ( 1 .. $#cols_out )
+        {
+            if ( $cols_out[$i] < $cols_out[ $i - 1 ] )
+            {
+                $sequential = 0;
+                last;
+            }
+        }
+    }
+
+    if ( !$opt{'s'} and !$opt{'c'} and $sequential )
+    {
+
+        # no condition, derived exps, order requested => use cut command
+        # (cut columns are required to be sequential)
+
+        my $cut_command = "cut -d'\t' -f" . join( ',', @cols_out ) . " ";
+        return "$in_pipe $cut_command";
+    }
+
+    # header
+    my $output_header = join $delim, @names_out;
+
+    # other lines
+    my $output_body = join "\"$delim\"", @vals_out;
+
+#my $awk_command = "awk -F\'$delim\' \' $cond_header {print \"$output_header\";} $cond_exp {print $output_body;} \' ";
+    my $awk_command =
+"awk -F\'$delim\' \' (NR==1) {print \"$output_header\";} $cond_exp {print $output_body;} \' ";
+    return "$in_pipe $awk_command";
+}
+
+sub project_columns()
+{
+    if ( $regex_flag and $key_spec ne "" )
+    {
+
+        # output order same as input
+        for ( my $i = 0 ; $i < $num_input_cols ; $i++ )
+        {
+            my $match_flag = ( $names_in[$i] =~ m/$key_spec/i );
+
+            $match_flag = ( 1 - $match_flag ) if ($inverse_flag);
+
+            if ($match_flag)
+            {
+                my $pos = $i + 1;
+                push @cols_out,  $pos;
+                push @vals_out,  $rhs{ $names_in[$i] };
+                push @names_out, $names_in[$i];
+            }
+        }
+    }
+    else
+    {
+
+        # order of columns specified by user
+        # column names must match exactly
+        my @specs;
+        if ( $key_spec eq '.*' )
+        {
+
+            # no columns specified, use all input columns
+            @specs = @names_in[ 0 .. ( $num_input_cols - 1 ) ];
+        }
+        else
+        {
+            @specs = split /[|,]/, $key_spec; # allow separation with '|' or ','
+        }
+
+        for ( my $i = 0 ; $i <= $#specs ; $i++ )
+        {
+            my $spec = $specs[$i];
+
+            # range expression: col1 .. coln ?
+            my ( $spec_begin, $spec_end ) = split /\.\./, $spec;
+            $spec_end = $spec_begin
+              unless ( defined $spec_end );    # not a range range expression
+
+            my $col_begin = $names_in_hash{$spec_begin};
+
+            die "error: requested column '$spec_begin' not defined"
+              unless ( defined $col_begin );
+
+            my $col_end = $names_in_hash{$spec_end};
+            die "error: requested column '$spec_end' not defined"
+              unless ( defined $col_end );
+
+            for ( my $j = $col_begin ; $j <= $col_end ; $j++ )
+            {
+                push @cols_out,  $j;
+                push @vals_out,  $rhs{ $names_in[ $j - 1 ] };
+                push @names_out, $names_in[ $j - 1 ];
+            }
+        }
+    }
+
+    # always include derived columns
+    for ( my $j = $num_input_cols ; $j <= $#names_in ; $j++ )
+    {
+        push @cols_out,  $j + 1;
+        push @vals_out,  $rhs{ $names_in[$j] };
+        push @names_out, $names_in[$j];
+    }
+
+    die "error: no columns selected" if ( scalar(@cols_out) == 0 );
+}
+
+sub main
+{
+    parse_options();
+
+    $header = process_header( $filename, \@names_in, \%names_in_hash, \%rhs );
+
+    parse_derived_option();
+
+    # find output columns
+
+    project_columns();
+
+    if ($list_flag)
+    {
+
+        # only list column numbers and names
+        for ( my $i = 0 ; $i <= $#cols_out ; $i++ )
+        {
+            print "$cols_out[$i]\t$names_out[$i]\n";
+        }
+        exit 0;
+    }
+
+    my $cmd = get_script_text();
+
+    if ( $exec_flag == 0 )
+    {
+
+        # only print script, do nothing else
+        print "$cmd\n";
+        exit(0);
+    }
+
+    if ( $filename eq "-" )
+    {
+
+        # use as filter
+        open( STDOUT, "| $cmd" );
+        print join( $delim, @names_out ) . "\n";    # header
+        while (<$infile>)
+        {
+            print;
+        }
+    }
+    else
+    {
+
+        # file name given by user
+        system($cmd);
+    }
+}
+
+main;
+
+__END__
+
+=head1 NAME
+
+tblgen - simple line-wise computation.
+
+=head1 SYNOPSIS
+
+B<tblgen>  S<[ B<cdehiklmrsv> ] file>
+
+=head1 OPTIONS
+
+=over
+
+=item B<-c> <expression>
+
+compute derived column (awk syntax, format: <name1=exp1,name2=exp2,...>
+
+=item B<-d> <column delimiter>
+
+default: try any of '\t', ' ', ','
+
+=item B<-e>
+
+do not execute command; instead, print awk or cut script to stdout
+
+=item B<-h>
+
+show this help message
+
+=item B<-i>
+
+inverse cut mode, i.e., select columns that don't match (only with -r)
+
+=item B<-k> <column spec>
+
+comma-delimited list (or regular expression) of column names. E.g., 'key1|key2'; ranges are allowed: 'key1..key2'.
+
+Use "-k ''" to suppress all input columns, and "-k '*'" to output all of them (default).
+
+
+=item B<-l>
+
+only list header columns
+
+=item B<-m>
+
+print manual page
+
+=item B<-r>
+
+interpret <column spec> as (perl) regular expression
+
+=item B<-s> <condition>
+
+Only output lines where the condition (awk expression) is true.
+
+=item B<-v>
+
+verbose
+
+=back
+
+=head1 DESCRIPTION
+
+This program translates the given command line options into a cut- or single-line awk command and immediately executes it (unless the opton '-e' is specified).
+
+In contrast to 'cut', output columns can be selected in any order; using regular expressions; using ranges (first_col..last_col); or by exclusion ('-i').
+
+Assumption: the first line of the file contains the column names.
+
+=head1 EXAMPLES
+
+Print columns 'rep' and 'sales' for lines where column 'region' has value 'us':
+    tblgen -s'region=="us"' -k'rep,sales' <file>
+
+Compute ratio of columns 'sales' and 'clients', output as single column:
+    tblgen -k '' -c'sales_per_client=sales/client' <file>
+
+Cut out of columns whose names contains the string 'internal':
+    tblgen -irk'internal' <file>
+
+
+=head1 AUTHOR
+
+Stefan Schroedl E<lt>stefan.schroedl@gmx.deE<gt>
+
+=head1 COPYRIGHT
+
+Copyright (c) 2009 by Stefan Schroedl
+
+=head1 LICENSE
+
+This package is free software; you can redistribute it and/or modify it
+under the terms of the "GNU General Public License Version 3".
+
+Please refer to the file "COPYING" for details.
+
+=head1 DISCLAIMER
+
+This package is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+See the "GNU General Public License" for more details.
+
+=cut

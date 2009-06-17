@@ -1,0 +1,112 @@
+#!/bin/env perl
+use strict;
+use warnings;
+use Getopt::Std;
+use Pod::Usage;
+
+my $header     = "UNINIT";
+my $opt_string = 'hm';
+my %opt;
+
+Getopt::Std::getopts( $opt_string, \%opt ) or pod2usage(2);
+
+pod2usage( { -exitval => 0, -verbose => 2 } ) if $opt{'m'};
+pod2usage(1) if ( $opt{h} or $#ARGV < 0 );
+
+pod2usage(2) if $#ARGV > 1;
+
+my $cmd = $ARGV[0];
+
+if ( $#ARGV == 0 )
+{
+
+    # read from stdin
+    my $header = <STDIN>;
+    print $header;
+    open( STDOUT, "| $cmd" );
+    while (<STDIN>)
+    {
+        print;
+    }
+}
+else
+{
+
+    # program might not be able to filter, use temporary file
+    my $filename = $ARGV[1];
+    my $tmpin    = "tmpout.$$";
+    my $tmpout   = "tmpin.$$";
+    system("head -n 1 $filename > $tmpout");
+    system("tail -n +2 $filename > $tmpin");
+    system("$cmd $tmpin >> $tmpout");
+    open( F, $tmpout );
+    while (<F>)
+    {
+        print;
+    }
+    close(F);
+    system("rm $tmpin $tmpout");
+}
+
+__END__
+
+=head1 NAME
+
+tblcmd - run command (e.g., sort, uniq) on body of file, keep header unchanged
+
+=head1 SYNOPSIS
+
+B<tblcmd>  [ B<-hm> ] <cmd> <file>
+
+cat <file> | B<tblcmd>  S<[ B<-hm> ] <cmd> >
+
+=head1 OPTIONS
+
+=over
+
+=item B<-h>
+
+show this help message
+
+=item B<-m>
+
+print manual page
+
+=back
+
+=head1 DESCRIPTION
+
+When used as a filter: outputs header, calls <cmd> on `tail -n +2 file`, outputs result.
+
+When file argument is specified: same result, but calls <cmd> with a temporary file as argument. This is less efficient, but might be necessary for programs that can't be run as a filter.
+
+=head1 EXAMPLES
+
+tblcmd 'sort -r' file.txt | less
+
+cat file.txt | tblcmd 'sort -r' | less
+
+=head1 AUTHOR
+
+Stefan Schroedl E<lt>stefan.schroedl@gmx.deE<gt>
+
+=head1 COPYRIGHT
+
+Copyright (c) 2009 by Stefan Schroedl
+
+=head1 LICENSE
+
+This package is free software; you can redistribute it and/or modify it
+under the terms of the "GNU General Public License Version 3".
+
+Please refer to the file "COPYING" for details.
+
+=head1 DISCLAIMER
+
+This package is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+See the "GNU General Public License" for more details.
+
+=cut

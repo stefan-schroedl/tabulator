@@ -1,0 +1,99 @@
+#!/bin/env perl
+use strict;
+use warnings;
+use Getopt::Std;
+use Pod::Usage;
+
+my $header     = "UNINIT";
+my $opt_string = 'hm';
+my %opt;
+
+Getopt::Std::getopts( $opt_string, \%opt ) or pod2usage(2);
+
+pod2usage( { -exitval => 0, -verbose => 2 } ) if $opt{'m'};
+pod2usage(1) if $opt{h};
+
+pod2usage(2) unless @ARGV;
+
+while ( my $name = shift @ARGV )
+{
+    unless ( open( F, $name ) )
+    {
+        warn "Can't open $name: $!\n";
+        next;
+    }
+
+    # check header
+    my $next_header;
+    if ( defined( $next_header = <F> ) )
+    {
+        if ( $header eq 'UNINIT' )
+        {
+            $header = $next_header;
+            print $header;
+        }
+        elsif ( $header ne $next_header )
+        {
+            die "header not identical in file '$name', aborting";
+        }
+
+        while (<F>)
+        {
+            print;
+        }
+    }
+}
+
+__END__
+
+=head1 NAME
+
+tblcat - concatenate files without repeating header
+
+=head1 SYNOPSIS
+
+B<tblcat>	S<[ B<-hm> ] file1 file2 ...>
+
+=head1 OPTIONS
+
+=over
+
+=item B<-h>
+
+show this help message
+
+=item B<-m>
+
+print manual page
+
+=back
+
+=head1 DESCRIPTION
+
+Concatenates a list of files, where the first line is omitted except in the first file.
+The first lines in all files are required to be identical.
+
+=head1 AUTHOR
+
+Stefan Schroedl E<lt>stefan.schroedl@gmx.deE<gt>
+
+=head1 COPYRIGHT
+
+Copyright (c) 2009 by Stefan Schroedl
+
+=head1 LICENSE
+
+This package is free software; you can redistribute it and/or modify it
+under the terms of the "GNU General Public License Version 3".
+
+Please refer to the file "COPYING" for details.
+
+=head1 DISCLAIMER
+
+This package is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+See the "GNU General Public License" for more details.
+
+=cut

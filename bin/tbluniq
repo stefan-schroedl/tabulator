@@ -1,0 +1,699 @@
+#!/bin/env perl
+
+use strict;
+use warnings;
+use Scalar::Util qw(looks_like_number);
+use List::Util qw(min);
+use Getopt::Std;
+use Pod::Usage;
+use FileHandle;
+
+my $infile          = new FileHandle;
+my %opt             = ();            # command line options
+my $delim           = "\t";          # input file delimiter
+my $verbose         = 0;             # verbose output?
+my $check_flag      = 0;             # perform check only?
+my $exec_flag       = 1;             # output script only?
+my $undirected_flag = 1;             # find only uniques or dependencies?
+my $no_header       = 0;             # first line does not contain columns names
+my $first_line;
+my $opt_gz = 0;                      # gzipped file?
+
+# constants for numeric comparison
+my $EPS     = 1;
+my $EPS_REL = 1e-8;
+
+sub guess_delim
+{
+    my ($line) = @_;
+
+    my $delim = "\t";
+
+    if ( $line =~ m/,/ )
+    {
+        $delim = ',';
+    }
+    elsif ( $line =~ m/\t/ )
+    {
+        $delim = "\t";
+    }
+    elsif ( $line =~ m/ / )
+    {
+        $delim = ' ';
+    }
+    elsif ( $line =~ m// )
+    {
+        $delim = '';
+    }
+    return $delim;
+}
+
+# compare value (numerically, if both args are numbers; else string comparison)
+sub compare_val
+{
+    my ( $val1, $val2 ) = @_;
+    my $comp = ( $val1 ne $val2 );
+    return $comp unless ($comp);    # equal strings
+
+    # if both fields are numbers, try numerical comparison
+    if ( looks_like_number($val1) and looks_like_number($val2) )
+    {
+        my $abs_diff = abs( $val1 - $val2 );
+        if ( $abs_diff < $EPS )
+        {
+            my $rel_diff = $abs_diff / min( abs($val1), abs($val2) );
+            $comp = 0 if ( $rel_diff < $EPS_REL );
+        }
+    }
+
+    return $comp;
+}
+
+# topological sort
+sub topo_sort
+{
+    my @out = @_;
+    my @ret;
+
+    # Compute initial in degrees
+    my @ind;
+    foreach my $l (@out)
+    {
+        ++$ind[$_] for (@$l);
+    }
+
+    # Work queue
+    my @q;
+    @q = grep { !$ind[$_] } 0 .. $#out;
+
+    # Loop
+    while (@q)
+    {
+        my $el = shift @q;
+        $ret[@ret] = $el;
+        for ( @{ $out[$el] } )
+        {
+            push @q, $_ if ( ! --$ind[$_] );
+        }
+    }
+
+    return @ret == @out ? @ret : undef;
+}
+
+# read and store column names
+sub process_header
+{
+    my ( $filename, $cols, $col_hash ) = @_;
+    $infile->open( $opt_gz ? "gunzip -c $filename |" : $filename )
+      or die "Can't open '$filename': $!";
+
+    ## Get field names from first line
+    my $header = <$infile>;
+    $first_line = $header;
+    $header =~ s/\s+$//g;
+
+    $delim = guess_delim($header) unless ( $opt{'d'} );
+
+    @{$cols} = split( /$delim/, $header );
+
+    # check if first line is indeed header
+
+    my @alt_fields;
+    my $cnt = 0;
+    foreach my $field ( @{$cols} )
+    {
+        $cnt++;
+        if ( looks_like_number($field) )
+        {
+            print STDERR "assuming no header\n"
+              if ( $verbose and ( !$no_header ) );
+            $no_header = 1;
+        }
+        push @alt_fields, $cnt;
+    }
+
+    @{$cols} = @alt_fields if ($no_header);
+
+    %{$col_hash} = ();
+    my $col = 1;
+
+    foreach my $field ( @{$cols} )
+    {
+        $col_hash->{$field} = $col;
+        $col++;
+    }
+}
+
+
+sub find_dep
+{
+    my ( $filename, $num_cols, $undirected ) = @_;
+
+    my %ndep = ();  # hash to remember pairwise non-dependencies, by independent
+    my %ndep_inv =
+      ();           # hash to remember pair-wise non-dependencies, by dependent
+    my %uniq = ()
+      ; # columns that have already been proven to be different from all others (algorithm shortcut)
+    my %assoc = ();    # bidirectional association hash val(col1) -> val(col2)
+
+    my $count_lines = ( $no_header ? 1 : 0 );
+
+    while (1)
+    {
+        last
+          if ( scalar( keys %uniq ) == $num_cols )
+          ;            # all columns are unique, nothing more to learn
+        if ( $no_header and $count_lines == 1 )
+        {
+
+            # first line read but not yet processed
+            $_ = $first_line;
+        }
+        else
+        {
+            ( defined( $_ = <$infile> ) ) or last;
+        }
+
+        $count_lines++;
+
+        chomp;
+
+        my @vals = split /$delim/, $_;
+
+        if ( scalar(@vals) != $num_cols )
+        {
+            print STDERR
+"ERROR: number of header fields ($num_cols) in line $count_lines != number of data fields ("
+              . scalar(@vals) . ")\n";
+            print STDERR join( " / ", @vals ) . "\n";
+
+            #exit;
+            next;
+        }
+
+        for ( my $i = 0 ; $i < $num_cols ; $i++ )
+        {
+            next if ( defined $uniq{$i} );    # nothing to learn
+
+            for ( my $j = $i + 1 ; $j < $num_cols ; $j++ )
+            {
+                next
+                  if ( ( exists $ndep{$i}{$j} ) and ( exists $ndep{$j}{i} ) )
+                  ;                           # nothing to learn
+
+                my $val1 = $vals[$i];
+                my $val2 = $vals[$j];
+
+                if ($undirected)
+                {
+                    my $comp = compare_val( $val1, $val2 );
+
+                    if ($comp)
+                    {
+
+                        # different
+                        $ndep{$i}{$j} = 1;
+                        $ndep{$j}{$i} = 1;
+
+                        $uniq{$i} = 1
+                          if ( scalar( keys %{ $ndep{$i} } ) == $num_cols - 1 );
+
+                        $uniq{$j} = 1
+                          if ( scalar( keys %{ $ndep{$j} } ) == $num_cols - 1 );
+
+                        last
+                          if ( scalar( keys %uniq ) == $num_cols )
+                          ;    # all columns are unique
+                    }
+                }
+                else
+                {
+                    unless ( exists $ndep{$i}{$j} )
+                    {
+
+                        # try to falsify dependence i -> j
+                        # construct lookup key
+                        my $key = $val1;
+                        $key = $val1 + 0
+                          if ( looks_like_number($val1) );    # normalize
+
+                        $key = "$i:$j:$key";
+                        my $prev = $assoc{$key};
+                        if ( !defined $prev )
+                        {
+
+                            # value not previously seen in this column
+                            $assoc{$key} = $val2;
+                        }
+                        else
+                        {
+                            my $comp = compare_val( $val2, $prev );
+
+                            if ($comp)
+                            {
+
+                                # different, update hashes
+                                $ndep{$i}{$j}     = 1;
+                                $ndep_inv{$j}{$i} = 1;
+                                $uniq{$j}         = 1
+                                  if (
+                                    (
+                                        scalar( keys %{ $ndep{$j} } ) ==
+                                        $num_cols - 1
+                                    )
+                                    and (
+                                        scalar( keys %{ $ndep_inv{$j} } ) ==
+                                        $num_cols - 1 )
+                                  );
+                                $uniq{$i} = 1
+                                  if (
+                                    (
+                                        scalar( keys %{ $ndep{$i} } ) ==
+                                        $num_cols - 1
+                                    )
+                                    and (
+                                        scalar( keys %{ $ndep_inv{$i} } ) ==
+                                        $num_cols - 1 )
+                                  );
+                            }
+                        }
+                    }
+
+                    # now the same in the opposite direction
+                    if ( !exists $ndep{$j}{$i} )
+                    {
+
+                        # try to falsify dependence j -> i
+                        # construct lookup key
+                        my $key = $val2;
+                        $key = $val2 + 0
+                          if ( looks_like_number($val2) );    # normalize
+
+                        $key = "$j:$i:$key";
+                        my $prev = $assoc{$key};
+                        if ( !defined $prev )
+                        {
+
+                            # value not previously seen in this column
+                            $assoc{$key} = $val1;
+                        }
+                        else
+                        {
+                            my $comp = compare_val( $val1, $prev );
+
+                            if ($comp)
+                            {
+
+                                # different, update hashes
+                                $ndep{$j}{$i}     = 1;
+                                $ndep_inv{$i}{$j} = 1;
+                                $uniq{$j}         = 1
+                                  if (
+                                    (
+                                        scalar( keys %{ $ndep{$j} } ) ==
+                                        $num_cols - 1
+                                    )
+                                    and (
+                                        scalar( keys %{ $ndep_inv{$j} } ) ==
+                                        $num_cols - 1 )
+                                  );
+                                $uniq{$i} = 1
+                                  if (
+                                    (
+                                        scalar( keys %{ $ndep{$i} } ) ==
+                                        $num_cols - 1
+                                    )
+                                    and (
+                                        scalar( keys %{ $ndep_inv{$i} } ) ==
+                                        $num_cols - 1 )
+                                  );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return \%ndep;
+}
+
+sub eval_dep
+{
+    my ( $ndep, $fields, $undirected ) = @_;
+    my $num_cols = scalar(@$fields);
+    my @uniq     = ();
+    my %equiv    = ();
+
+    # first, find duplicates
+
+    my @dup;
+    my %dup_flag = ();
+
+    my $dup_str = ( $undirected ? "duplicates: " : "isomorphic: " );
+
+    for ( my $i = 0 ; $i < $num_cols ; $i++ )
+    {
+        my @dup_i = ();
+        unless ( defined $dup_flag{$i} )
+        {
+            push @uniq, $i;
+            for ( my $j = $i + 1 ; $j < $num_cols ; $j++ )
+            {
+                next if ( defined $dup_flag{$j} );
+
+                if (    ( !defined $ndep->{$i}->{$j} )
+                    and ( !defined $ndep->{$j}->{$i} ) )
+                {
+
+                    # j is duplicate of i
+                    $dup_flag{$j} = $i unless ( defined $dup_flag{$j} );
+                    push @dup_i, $j;
+                }
+            }
+        }
+        if ( scalar(@dup_i) > 0 )
+        {
+            my $equiv_str = "{"
+              . $fields->[$i] . ","
+              . join( ",", ( map "$fields->[$_]", @dup_i ) ) . "}";
+            $dup_str .= "\n$equiv_str";
+            $equiv{$i} = $equiv_str;
+        }
+
+        push @dup, \@dup_i;
+    }
+
+    if ( $verbose or $check_flag )
+    {
+        $dup_str .= "none" if ( scalar(@uniq) == $num_cols );
+        print STDERR "$dup_str\n";
+    }
+
+    return \@uniq if ($undirected);
+
+    # second, check dependencies
+
+    # generate list of lists of dependents
+    my @dep;
+    for ( my $i = 0 ; $i < $num_cols ; $i++ )
+    {
+        my @dep_i = ();
+        unless ( defined $dup_flag{$i} )
+        {
+            for ( my $j = 0 ; $j < $num_cols ; $j++ )
+            {
+                next if ( defined $dup_flag{$j} or $i == $j );
+
+                push @dep_i, $j if ( !defined $ndep->{$i}->{$j} );
+            }
+        }
+        push @dep, \@dep_i;
+    }
+
+    my @tsorted = topo_sort(@dep);
+
+    # print out only immediate dependencies
+
+    my %t_rank;
+    my $cnt = 0;
+    foreach my $node (@tsorted)
+    {
+        $t_rank{$node} = $cnt;
+        $cnt++;
+    }
+
+    my $dep_str = "\ndependencies: ";
+    my $any_dep = 0;
+    for ( my $i = 0 ; $i <= $#tsorted ; $i++ )
+    {
+        my $idx = $tsorted[$i];
+        next if ( defined $dup_flag{$idx} );
+
+        my @dependents = @{ $dep[$idx] };
+
+        #print "I $i $idx " . $#dependents . "\n";
+
+        next if ( $#dependents < 0 );
+
+        @dependents = sort { $t_rank{$a} <=> $t_rank{$b} } @dependents;
+
+        while (@dependents)
+        {
+            my $el   = shift @dependents;
+            my $str1 = $equiv{$idx};
+            $str1 = $fields->[$idx] if ( !defined $str1 );
+
+            my $str2 = $equiv{$el};
+            $str2 = $fields->[$el] if ( !defined $str2 );
+
+            $dep_str .= "\n$str1 -> $str2";
+            $any_dep = 1;
+
+            # remove direct dependends of this node
+            @dependents = grep( ( defined $ndep->{$el}->{$_} ), @dependents );
+        }
+    }
+
+    if ( $verbose or $check_flag )
+    {
+        $dep_str = "none" if ( !$any_dep );
+        print STDERR "$dep_str\n";
+    }
+
+    return \@uniq;
+}
+
+sub parse_options
+{
+    my $opt_string = 'cdehmt:T:vx';
+
+    Getopt::Std::getopts( $opt_string, \%opt ) or pod2usage(2);
+    pod2usage( { -exitval => 0, -verbose => 2 } ) if $opt{'m'};
+    pod2usage(1) if $opt{'h'};
+
+    $verbose         = 1         if $opt{'v'};
+    $check_flag      = 1         if $opt{'c'};
+    $undirected_flag = 0         if $opt{'x'};
+    $exec_flag       = 0         if $opt{'e'};
+    $EPS             = $opt{'t'} if defined $opt{'t'};
+    $EPS_REL         = $opt{'T'} if defined $opt{'T'};
+
+    my $filename = '';
+    foreach my $arg (@ARGV)
+    {
+        $filename = $arg unless ( $arg =~ m/^-/ );
+    }
+
+    if ( $filename eq '' )
+    {
+
+        # try to read from stdin
+
+        pod2usage(
+            {
+                -exitval => 2,
+                -verbose => 1,
+                -message =>
+                  "only options '-c' or '-e' allowed when reading from stdin"
+            }
+        ) unless ( $check_flag or ( !$exec_flag ) );
+
+        if ( -t *STDIN )
+        {
+
+            # no arguments given
+            pod2usage(
+                {
+                    -exitval => 2,
+                    -verbose => 1,
+                    -message => 'no argument given'
+                }
+            );
+        }
+        $filename = '-';
+
+    }
+
+    if ( $filename =~ /\.gz$|\.Z$|\.zip$/ )
+    {
+        # a GZIP file
+        $opt_gz = 1;
+    }
+
+    return $filename;
+}
+
+sub main
+{
+    my $filename = parse_options();
+
+    my @cols     = ();
+    my %col_hash = ();
+
+    process_header( $filename, \@cols, \%col_hash );
+
+    # process lines in input file
+    my $ndep = find_dep( $filename, scalar(@cols), $undirected_flag );
+
+    # find uniq and report
+    my $uniq = eval_dep( $ndep, \@cols, $undirected_flag );
+
+    unless ($check_flag)
+    {
+        my @uniq1 = map $_ + 1, @$uniq;
+        my $cmd;
+        if ( !$opt_gz )
+        {
+            $cmd = "cut -d'$delim' -f" . join( ',', @uniq1 ) . " $filename";
+        }
+        else
+        {
+            $cmd =
+                "zcat $filename | cut -d'$delim' -f"
+              . join( ',', @uniq1 )
+              . " | gzip -c ";
+        }
+        if ( !$exec_flag )
+        {
+            print "$cmd\n";
+        }
+        else
+        {
+            system($cmd);
+        }
+    }
+}
+
+main;
+
+__END__
+
+=head1 NAME
+
+tbluniq - remove duplicate (or isomorphic) columns
+
+=head1 SYNOPSIS
+
+B<tbluniq>	S<[ B<-cdehmtTvx> ] file>
+
+=head1 OPTIONS
+
+=over
+
+=item B<-c> 
+
+check only, print out message about duplicate columns
+
+=item B<-d> <column delimiter>
+
+default: try any of '\t', ' ', ','
+
+=item B<-e>
+
+do not execute, instead print out cut-command
+
+=item B<-h>
+
+show this help message.
+
+=item B<-m>
+
+print manual page
+
+=item B<-t>
+
+maximum absolute difference for numerical comparison (default: 1)
+
+=item B<-T>
+
+maximum relative difference for numerical comparison (default: 1e-8)
+
+=item B<-v>
+
+verbose output
+
+=item B<-x>
+
+"extended mode", check for dependencies
+
+A column y is dependent on x, x->y, if there is a function f with f(x)=y for all x.
+x is isomorphic to y, if x->y and y->x.
+The program tries to find dependencies and isomorphisms. The dependency graph is printed out.
+
+=back
+
+=head1 DESCRIPTION
+
+Test for and remove duplicate columns.
+
+Strings are compared using string equality; numbers are tested to be both within an absolute difference ('-t') and a relative difference ('T') of each other.
+Assumption: the first line of the file contains the column names.
+
+With the '-x' option, also checks for column dependencies and isomorphisms.
+
+Note: Either '-c' or 'e' must be specified when used as a filter
+
+=head1 EXAMPLES
+
+Suppose file is
+ key1,key2,key3,key4,key5,key6
+ 1,1,1,1,1,1
+ 1,2,4,2,1,2
+ 3,2,4,3,1,3
+ 4,4,3,4,1,4
+ 5,5,5,5,1,5
+
+Then B<tbluniq -v file>
+gives
+
+ duplicates:
+ {key4,key6}
+ key1,key2,key3,key4,key5
+ 1,1,1,1,1
+ 1,2,4,2,1
+ 3,2,4,3,1
+ 4,4,3,4,1
+ 5,5,5,5,1
+
+and  B<tbluniq -xv file> gives
+
+ isomorphic:
+ {key2,key3}
+ {key4,key6}
+ dependencies: 
+ {key4,key6} -> key1
+ {key4,key6} -> {key2,key3}
+ key1 -> key5
+ {key2,key3} -> key5
+ key1,key2,key4,key5
+ 1,1,1,1
+ 1,2,2,1
+ 3,2,3,1
+ 4,4,4,1
+ 5,5,5,1
+
+
+=head1 AUTHOR
+
+Stefan Schroedl E<lt>stefan.schroedl@gmx.deE<gt>
+
+=head1 COPYRIGHT
+
+Copyright (c) 2009 by Stefan Schroedl
+
+=head1 LICENSE
+
+This package is free software; you can redistribute it and/or modify it
+under the terms of the "GNU General Public License Version 3".
+
+Please refer to the file "COPYING" for details.
+
+=head1 DISCLAIMER
+
+This package is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+See the "GNU General Public License" for more details.
+
+=cut
