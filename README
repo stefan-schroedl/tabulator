@@ -93,12 +93,12 @@ the first line in input files contains the column names.
      Example: 
         Compute ratio of columns 'sales' and 'clients' for lines where
         the column 'region' has value 'us': 
-        tblgen -s'region=="us"' -c'sales_per_client=sales/client' <file>
+        tblmap -s'region=="us"' -c'sales_per_client=sales/client' <file>
 
    * tblred: compute ("reduce") aggregations (e.g., sum, average) over groups
      of keys.
      Example: 
-        tblgroup -k'region' 'sales_ratio=sales/sum(sales)' computes
+        tblred -k'region' 'sales_ratio=sales/sum(sales)' computes
         for each line proportion of column 'sales' to total sales for
         all lines with the same value of column 'region'.
 
@@ -158,5 +158,5 @@ the first line in input files contains the column names.
      or `"`; it is the user's responsibility to ensure that the column
      delimiter cannot occur within column values.
 
-   * tbljoin, tblgroup, tblhist, tbluniq, tblcat, and tbltex have some
+   * tbljoin, tblred, tblhist, tbluniq, tblcat, and tbltex have some
      restrictions when run as a filter (repeated reading is necessary)
