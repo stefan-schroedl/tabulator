@@ -6,7 +6,8 @@ URL:
 Author:
 	 Stefan Schroedl <stefan.schroedl@gmx.de>
 Date:
-	2009/06/16
+	2011/11/25 release 1.1
+	2009/06/16 release 1.0
 
 ----------------------------------------------------------------------
 1. What is Tabulator?
@@ -69,7 +70,7 @@ the first line in input files contains the column names.
      without affecting the header
 
    * tbldesc: for each column, summarize type (e.g., char, int,
-     float), percentage of undefined values, min/max/mean/std
+     float), percentage of undefined values, min/max/mean/median/std
      etc. Can also provide correlation coefficients with a target
      column. 
      Example:
@@ -88,13 +89,13 @@ the first line in input files contains the column names.
         3 height     float  0    3 5.5  6.1 5.85  0.218  4.89   0.812 18.82
         4 shoe_size  float  0    4 8   12.5 10.5  1.7     0.0   1.0    0.00
 
-   * tblgen: simple line-wise computation similar to awk.
+   * tblmap: simple line-wise ("map") computation similar to awk.
      Example: 
         Compute ratio of columns 'sales' and 'clients' for lines where
         the column 'region' has value 'us': 
         tblgen -s'region=="us"' -c'sales_per_client=sales/client' <file>
 
-   * tblgroup: compute aggregations (e.g., sum, average) over groups
+   * tblred: compute ("reduce") aggregations (e.g., sum, average) over groups
      of keys.
      Example: 
         tblgroup -k'region' 'sales_ratio=sales/sum(sales)' computes
@@ -142,7 +143,7 @@ the first line in input files contains the column names.
         de
         fr
 
-   * tbltext: formatting for latex tables
+   * tbltex: formatting for latex tables
 
    * tbltranspose: transposition of rows and columns
 
