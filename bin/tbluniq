@@ -23,29 +23,16 @@ my $opt_gz = 0;                      # gzipped file?
 my $EPS     = 1;
 my $EPS_REL = 1e-8;
 
+# guess file delimiter from header line
 sub guess_delim
 {
-    my ($line) = @_;
+    my $line = shift;
 
-    my $delim = "\t";
-
-    if ( $line =~ m/,/ )
+    for my $delim ( "\t", ",", " ", "" )
     {
-        $delim = ',';
+        return $delim if ( $line =~ m/$delim/ );
     }
-    elsif ( $line =~ m/\t/ )
-    {
-        $delim = "\t";
-    }
-    elsif ( $line =~ m/ / )
-    {
-        $delim = ' ';
-    }
-    elsif ( $line =~ m// )
-    {
-        $delim = '';
-    }
-    return $delim;
+    return "\t";
 }
 
 # compare value (numerically, if both args are numbers; else string comparison)
@@ -107,6 +94,8 @@ sub process_header
     $infile->open( $opt_gz ? "gunzip -c $filename |" : $filename )
       or die "Can't open '$filename': $!";
 
+    binmode( $infile, ":utf8" );
+
     ## Get field names from first line
     my $header = <$infile>;
     $first_line = $header;
@@ -143,7 +132,6 @@ sub process_header
         $col++;
     }
 }
-
 
 sub find_dep
 {
@@ -187,7 +175,6 @@ sub find_dep
               . scalar(@vals) . ")\n";
             print STDERR join( " / ", @vals ) . "\n";
 
-            #exit;
             next;
         }
 
@@ -431,8 +418,6 @@ sub eval_dep
 
         my @dependents = @{ $dep[$idx] };
 
-        #print "I $i $idx " . $#dependents . "\n";
-
         next if ( $#dependents < 0 );
 
         @dependents = sort { $t_rank{$a} <=> $t_rank{$b} } @dependents;
@@ -494,7 +479,7 @@ sub parse_options
                 -exitval => 2,
                 -verbose => 1,
                 -message =>
-                  "only options '-c' or '-e' allowed when reading from stdin"
+                  "Only options '-c' or '-e' allowed when reading from stdin"
             }
         ) unless ( $check_flag or ( !$exec_flag ) );
 
@@ -516,6 +501,7 @@ sub parse_options
 
     if ( $filename =~ /\.gz$|\.Z$|\.zip$/ )
     {
+
         # a GZIP file
         $opt_gz = 1;
     }
@@ -570,7 +556,7 @@ __END__
 
 =head1 NAME
 
-tbluniq - remove duplicate (or isomorphic) columns
+tbluniq - Remove duplicate (or isomorphic) columns
 
 =head1 SYNOPSIS
 
@@ -582,39 +568,39 @@ B<tbluniq>	S<[ B<-cdehmtTvx> ] file>
 
 =item B<-c> 
 
-check only, print out message about duplicate columns
+Check only, print out message about duplicate columns
 
 =item B<-d> <column delimiter>
 
-default: try any of '\t', ' ', ','
+Default: try any of '\t', ' ', ','
 
 =item B<-e>
 
-do not execute, instead print out cut-command
+Do not execute, instead print out cut-command
 
 =item B<-h>
 
-show this help message.
+Show this help message.
 
 =item B<-m>
 
-print manual page
+Print manual page
 
 =item B<-t>
 
-maximum absolute difference for numerical comparison (default: 1)
+Maximum absolute difference for numerical comparison (default: 1)
 
 =item B<-T>
 
-maximum relative difference for numerical comparison (default: 1e-8)
+Maximum relative difference for numerical comparison (default: 1e-8)
 
 =item B<-v>
 
-verbose output
+Verbose output
 
 =item B<-x>
 
-"extended mode", check for dependencies
+"Extended mode", check for dependencies
 
 A column y is dependent on x, x->y, if there is a function f with f(x)=y for all x.
 x is isomorphic to y, if x->y and y->x.

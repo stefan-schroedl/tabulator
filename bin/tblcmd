@@ -2,57 +2,165 @@
 use strict;
 use warnings;
 use Getopt::Std;
+use FileHandle;
 use Pod::Usage;
 
 my $header     = "UNINIT";
-my $opt_string = 'hm';
+my $opt_string = 'hmed:';
 my %opt;
 
-Getopt::Std::getopts( $opt_string, \%opt ) or pod2usage(2);
+my $delim = "\t";
+my @field_arr;
+my %field_hash;
 
-pod2usage( { -exitval => 0, -verbose => 2 } ) if $opt{'m'};
-pod2usage(1) if ( $opt{h} or $#ARGV < 0 );
+my $infile = new FileHandle;
 
-pod2usage(2) if $#ARGV > 1;
-
-my $cmd = $ARGV[0];
-
-if ( $#ARGV == 0 )
+sub guess_delim
 {
+    my $line = shift;
 
-    # read from stdin
-    my $header = <STDIN>;
-    print $header;
-    open( STDOUT, "| $cmd" );
-    while (<STDIN>)
+    for my $delim ( "\t", ",", " ", "" )
     {
-        print;
+        return $delim if ( $line =~ m/$delim/ );
+    }
+    return "\t";
+}
+
+sub process_header
+{
+    my $header = shift;
+
+    $delim = guess_delim($header) unless ( $opt{'d'} );
+
+    @field_arr = split $delim, $header;
+    %field_hash = ();
+    my $col = 1;
+
+    foreach my $field (@field_arr)
+    {
+        $field_hash{$field} = $col;
+        $col++;
     }
 }
-else
-{
 
-    # program might not be able to filter, use temporary file
-    my $filename = $ARGV[1];
-    my $tmpin    = "tmpout.$$";
-    my $tmpout   = "tmpin.$$";
-    system("head -n 1 $filename > $tmpout");
-    system("tail -n +2 $filename > $tmpin");
-    system("$cmd $tmpin >> $tmpout");
-    open( F, $tmpout );
-    while (<F>)
+sub replace_column_names
+{
+    my $input = shift;
+
+    # must replace longest names first, possible string overlap!
+    my @sorted_names = sort { length($b) <=> length($a) } @field_arr;
+    foreach my $name (@sorted_names)
     {
-        print;
+        my $col = ${ field_hash { $name } };
+        $input =~ s/\?$name/$col/g;
     }
-    close(F);
-    system("rm $tmpin $tmpout");
+
+    # delimiter symbol
+    $input =~ s/\?delim/$delim/g;
+    return $input;
 }
+
+sub main
+{
+    Getopt::Std::getopts( $opt_string, \%opt ) or pod2usage(2);
+
+    pod2usage( { -exitval => 0, -verbose => 2 } ) if $opt{'m'};
+    pod2usage(1) if ( $opt{h} or $#ARGV < 0 );
+
+    pod2usage(2) if $#ARGV > 1;
+
+    $delim = $opt{'d'} if ( $opt{'d'} );
+
+    my $cmd = $ARGV[0];
+
+    my $filename = '';
+
+    my $opt_gz = 0;
+
+    if ( $#ARGV > 0 && $ARGV[1] !~ m/^-/ )
+    {
+        $filename = $ARGV[1];
+        $opt_gz = ( $filename =~ /\.gz$|\.Z$|\.zip$/ );
+    }
+    else
+    {
+
+        # try to read stdin
+        if ( -t *STDIN )
+        {
+
+            # no arguments given
+            pod2usage(
+                {
+                    -exitval => 2,
+                    -verbose => 1,
+                    -message => 'No file argument given'
+                }
+            );
+        }
+        $filename = '-';
+    }
+
+    my $CAT = $opt_gz ? "zcat" : "cat";
+
+    $infile->open( $opt_gz ? "gunzip -c $filename |" : $filename )
+      or die "Couldn't open '$filename'";
+
+    binmode( $infile, ":utf8" );
+
+    ## Get field names from first line
+
+    my $header = <$infile>;
+    $header =~ s/\s+$//g;
+    process_header($header);
+
+    $cmd = replace_column_names($cmd);
+
+    if ( $opt{'e'} )
+    {
+        if ( $filename eq '-' )
+        {
+            print "(head -n 1 ; tail -n +1 | $cmd)\n";
+        }
+        else
+        {
+            print
+"($CAT $filename | head -n 1; $CAT $filename | tail -n +1 | $cmd)\n";
+        }
+        exit(0);
+    }
+    else
+    {
+        if ( $filename eq '-' )
+        {
+
+            open( STDOUT, "| $cmd" );
+            binmode( STDOUT, ":utf8" );
+
+            print "$header\n";
+
+            while (<$infile>)
+            {
+                print;
+            }
+        }
+        else
+        {
+            $infile->close();
+            system(
+"($CAT $filename | head -n 1; $CAT $filename | tail -n +1 | $cmd)"
+            );
+        }
+    }
+}
+
+main;
 
 __END__
 
 =head1 NAME
 
-tblcmd - run command (e.g., sort, uniq) on body of file, keep header unchanged
+tblcmd - Run command (e.g., sort, uniq) on body of file, keep header unchanged
 
 =head1 SYNOPSIS
 
@@ -64,27 +172,33 @@ cat <file> | B<tblcmd>  S<[ B<-hm> ] <cmd> >
 
 =over
 
+=item B<-d> <Column delimiter>
+
+Default: try any of '\t', ' ', ','
+
+=item B<-e>
+
+Do not execute command; instead, print script to stdout
+
 =item B<-h>
 
-show this help message
+Show this help message
 
 =item B<-m>
 
-print manual page
+Print manual page
 
 =back
 
 =head1 DESCRIPTION
 
-When used as a filter: outputs header, calls <cmd> on `tail -n +2 file`, outputs result.
-
-When file argument is specified: same result, but calls <cmd> with a temporary file as argument. This is less efficient, but might be necessary for programs that can't be run as a filter.
+This program expects a delimited file, where the first line is interpreted as a header. It outputs the header, then calls <cmd> on `tail -n +2 file`, with substitions: each occurrence of ?<column name>, for column names in the header, are replaced by the respective column index; and '?delim' is replaced by the detected column delimiter.
 
 =head1 EXAMPLES
 
-tblcmd 'sort -r' file.txt | less
+tblcmd 'sort -t"?delim" -k ?user_name' file.txt | less
 
-cat file.txt | tblcmd 'sort -r' | less
+cat file.txt | tblcmd 'sort -t"?delim" -k ?user_name' | less
 
 =head1 AUTHOR
 

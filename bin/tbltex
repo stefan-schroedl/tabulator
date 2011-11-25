@@ -66,28 +66,28 @@ def format(x,prec, raw):
 
 
 def main():
-    usage = 'usage: %prog -[abBdhpr] file'
-    description = """format tabular data into latex format"""
+    usage = 'Usage: tbltex -[abBdhpr] file'
+    description = """Format tabular data into latex format"""
     parser = OptionParser(usage=usage,description=description)
     parser.add_option('-a', '--alignment', dest='align',
                       help =
-                      """alignment spec for all columns. Default: 'r' """,
+                      """Alignment spec for all columns. Default: 'r' """,
                       default='r')
     parser.add_option('-b', '--boldheader', dest='boldheader',
-                      help ="""bold header""",
+                      help ="""Bold header""",
                       action='store_true', default=False)
     parser.add_option('-B', '--boldfirst', dest='boldfirst',
-                      help ="""bold first column""",
+                      help ="""Bold first column""",
                       action='store_true', default=False)
     parser.add_option('-d', '--delimiter', dest='delim',
                       help =
-                      """column delimiter in input file.
+                      """Column delimiter in input file.
                       Try to guess if unspecified""")
     parser.add_option('-p', '--precision', dest='prec',
-                      help ="""number of digits for floating point formatting""",
+                      help ="""Number of digits for floating point formatting""",
                       default="2")
     parser.add_option('-r', '--raw', dest='raw',
-                      help ="""do not attempt to format numbers""",
+                      help ="""Do not attempt to format numbers""",
                       action='store_true',
                       default=False)
  

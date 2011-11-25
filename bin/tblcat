@@ -3,6 +3,7 @@ use strict;
 use warnings;
 use Getopt::Std;
 use Pod::Usage;
+use FileHandle;
 
 my $header     = "UNINIT";
 my $opt_string = 'hm';
@@ -15,17 +16,22 @@ pod2usage(1) if $opt{h};
 
 pod2usage(2) unless @ARGV;
 
-while ( my $name = shift @ARGV )
+my $opt_gz = 0;
+
+while ( my $filename = shift @ARGV )
 {
-    unless ( open( F, $name ) )
-    {
-        warn "Can't open $name: $!\n";
-        next;
-    }
+    $opt_gz = ( $filename =~ /\.gz$|\.Z$|\.zip$/ );
+
+    my $infile = new FileHandle;
+
+    $infile->open( $opt_gz ? "gunzip -c $filename |" : $filename )
+      or die "Couldn't open '$filename'";
+
+    binmode( $infile, ":utf8" );
 
     # check header
     my $next_header;
-    if ( defined( $next_header = <F> ) )
+    if ( defined( $next_header = <$infile> ) )
     {
         if ( $header eq 'UNINIT' )
         {
@@ -34,10 +40,10 @@ while ( my $name = shift @ARGV )
         }
         elsif ( $header ne $next_header )
         {
-            die "header not identical in file '$name', aborting";
+            die "Header not identical in file '$filename', aborting";
         }
 
-        while (<F>)
+        while (<$infile>)
         {
             print;
         }
@@ -48,11 +54,11 @@ __END__
 
 =head1 NAME
 
-tblcat - concatenate files without repeating header
+tblcat - Concatenate files without repeating header
 
 =head1 SYNOPSIS
 
-B<tblcat>	S<[ B<-hm> ] file1 file2 ...>
+B<tblcat> S<[ B<-hm> ] file1 file2 ...>
 
 =head1 OPTIONS
 
@@ -60,11 +66,11 @@ B<tblcat>	S<[ B<-hm> ] file1 file2 ...>
 
 =item B<-h>
 
-show this help message
+Show this help message
 
 =item B<-m>
 
-print manual page
+Print manual page
 
 =back
 

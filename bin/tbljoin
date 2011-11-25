@@ -30,7 +30,7 @@ my $debug      = 0;         # debugging
 my $mem_size   = "1G";      # memory option for sort command
 my $null_str   = 'NA';      # default string for non-matching columns
 my $delim      = "\t";      # input file delimiter
-my $join_delim = ''
+my $join_delim = ''
   ; # the join delimiter should be a character smaller than any one used in the key, in order to preserve the lexical multi-column ordering
 my $tmp_dir   = cwd();    # directory for temporary files created by sort
 my $gz_flag_1 = 0;        # file 1 gzipped?
@@ -40,26 +40,11 @@ sub guess_delim
 {
     my $line = shift;
 
-    my $delim = "\t";
-
-    if ( $line =~ m/,/ )
+    for my $delim ( "\t", ",", " ", "" )
     {
-        $delim = ',';
+        return $delim if ( $line =~ m/$delim/ );
     }
-    elsif ( $line =~ m/\t/ )
-    {
-        $delim = "\t";
-    }
-    elsif ( $line =~ m/ / )
-    {
-        $delim = ' ';
-    }
-    elsif ( $line =~ m// )
-    {
-        $delim      = '';
-        $join_delim = '';    # has to be different
-    }
-    return $delim;
+    return "\t";
 }
 
 sub parse_options()
@@ -139,11 +124,11 @@ sub find_join_keys
         {
             my $col1 = $col_hash1->{$colname};
             $key_hash{$colname} = 1;
-            die "error: column name <$colname> not found in file $filename1"
+            die "Error: column name <$colname> not found in file $filename1"
               unless ( defined $col1 );
 
             my $col2 = $col_hash2->{$colname};
-            die "error: column name <$colname> not found in file $filename2"
+            die "Error: column name <$colname> not found in file $filename2"
               unless ( defined $col2 );
 
             push @key_cols1, $col1;
@@ -168,10 +153,10 @@ sub find_join_keys
                 push @spec_cols, $colname;
             }
         }
-        print STDERR "using join columns " . join( ',', @spec_cols ) . "\n";
+        print STDERR "Using join columns " . join( ',', @spec_cols ) . "\n";
     }
 
-    die "error: no matching columns found"
+    die "Error: no matching columns found"
       if ( $#key_cols1 < 0 or $#key_cols2 < 0 );
 }
 
@@ -181,6 +166,8 @@ sub process_header
     my ( $filename, $gz_flag ) = @_;
     open( INFILE, $gz_flag ? "gunzip -c $filename |" : $filename )
       or die "Can't open '$filename': $!";
+
+    binmode( INFILE, ":utf8" );
 
     ## Get field names from first line
     my $header = <INFILE>;
@@ -217,14 +204,14 @@ sub process_header
     }
     close(INFILE);
 
-    print STDERR "keys: "
+    print STDERR "Keys: "
       . join( ",", keys %field_hash ) . " "
       . scalar( keys %field_hash ) . "\n"
       if ($debug);
 
     if ( scalar( keys %field_hash ) != scalar(@fields) )
     {
-        warn "warning: file $filename contains duplicate columns";
+        warn "Warning: file $filename contains duplicate columns";
     }
 
     return ( $header, \@fields, \%field_hash );
@@ -234,8 +221,6 @@ sub get_script_text
 {
     my $comp_key1 = "\$" . join( "\"$join_delim\"\$", @key_cols1 );
     my $comp_key2 = "\$" . join( "\"$join_delim\"\$", @key_cols2 );
-    my $key_list1 = join( ",", @key_cols1 );
-    my $key_list2 = join( ",", @key_cols2 );
 
     # compute output columns (all minus key minus duplicates)
 
@@ -260,8 +245,6 @@ sub get_script_text
 
     for ( my $i = 1 ; $i <= $num_cols1 ; $i++ )
     {
-
-        #unless (defined $key_hash{$cols1->[$i-2]})
         if ( ( !$rjoin ) or !defined $key_hash{ $cols1->[ $i - 1 ] } )
         {
             push @joined_cols, "1." . ( $i + 1 );
@@ -279,33 +262,48 @@ sub get_script_text
         }
     }
 
-    # dedupe output header
+    # dedupe output header, in case files contain same non-key column names
+
     my %h;
+    my @deduped_names;
+
     foreach my $name (@joined_names)
     {
         my $prev = $h{$name} || 0;
         $h{$name} = $prev + 1;
-    }
-    my %cnt;
-    my @deduped_names;
-    foreach my $name (@joined_names)
-    {
-        if ( $h{$name} > 1 )
+        my $index = $prev;
+
+        my $alias    = $name;
+        my $baseName = $name;
+
+        if ( $prev > 0 )
         {
 
             # duplicate found
-            my $prev = $cnt{$name} || 0;
-            $prev++;
+
             warn
-"warning: the two input files contain duplicate non-key column: $name"
-              if ( $prev == 1 );
-            push @deduped_names, "$prev.$name";
-            $cnt{$name} = $prev;
+"Warning: the two input files contain the same non-key column: $name";
+
+            # find alias name
+            # note: if more than 2 duplicates, alias might have existed already
+
+            if ( $name =~ /(^.*)\.([0-9]+)$/ )
+            {
+
+                # name already contains version number: increment
+                $baseName = $1;
+                $index    = $2 + 1;
+            }
+
+            do
+            {
+                $alias = "$baseName.$index";
+                $index++;
+            } while ( exists $h{$alias} );
+
+            $h{$alias} = $index;
         }
-        else
-        {
-            push @deduped_names, $name;
-        }
+        push @deduped_names, $alias;
     }
 
     my $joined_header = join $delim, @deduped_names;
@@ -341,7 +339,6 @@ sub get_script_text
         $merge_key .= "}'";
     }
 
-    #chomp $join_format;
     print STDERR '#>>>>>>>>>>>>' . $join_format . '<<<<<<<<<<<<<<' . "\n"
       if ($debug);
 
@@ -359,12 +356,12 @@ $verbose_str
 # file 1
 
 # check if already sorted
-$cat_file1 | tail -n +2 | awk -F'$delim' '{print $comp_key1}' | sort -t'$delim' -k$key_list1 -c 2>/dev/null
+$cat_file1 | tail -n +2 | awk -F'$delim' '{print $comp_key1}' | sort -t'$delim' -k1,1 -c 2>/dev/null
 unsorted=\$?
 
 # prepare input 1 for join
 if [ \$unsorted == 1 ]; then
-   $cat_file1 | tail -n +2 | awk -F'$delim' '{print $comp_key1"$delim"\$0}' | sort -S $mem_size -T "$tmp_dir" -t'$delim' -k1 > "$tmp_dir/filename1.$$.compkey"
+   $cat_file1 | tail -n +2 | awk -F'$delim' '{print $comp_key1"$delim"\$0}' | sort -S $mem_size -T "$tmp_dir" -t'$delim' -k1,1 > "$tmp_dir/filename1.$$.compkey"
 else
    $cat_file1 | tail -n +2 | awk -F'$delim' '{print $comp_key1"$delim"\$0}' > "$tmp_dir/filename1.$$.compkey"
 fi
@@ -372,12 +369,12 @@ fi
 # file 2
 
 # check if already sorted
-$cat_file2 | tail -n +2 | awk -F'$delim' '{print $comp_key2}' | sort -t'$delim' -k$key_list1 -c 2>/dev/null
+$cat_file2 | tail -n +2 | awk -F'$delim' '{print $comp_key2}' | sort -t'$delim' -k1,1 -c 2>/dev/null
 unsorted=\$?
 
 # prepare input 2 for join
 if [ \$unsorted == 1 ]; then
-   $cat_file2 | tail -n +2 | awk -F'$delim' '{print $comp_key2"$delim"\$0}' | sort -S $mem_size -T "$tmp_dir" -t'$delim' -k1 > "$tmp_dir/filename2.$$.compkey"
+   $cat_file2 | tail -n +2 | awk -F'$delim' '{print $comp_key2"$delim"\$0}' | sort -S $mem_size -T "$tmp_dir" -t'$delim' -k1,1 > "$tmp_dir/filename2.$$.compkey"
 else
    $cat_file2 | tail -n +2 | awk -F'$delim' '{print $comp_key2"$delim"\$0}' > "$tmp_dir/filename2.$$.compkey"
 fi
@@ -419,7 +416,7 @@ sub main
         # write to file
         my $script_name = "join_script.$$.sh";
         open SCRIPT, ">$script_name"
-          or die "can't open output file to write script";
+          or die "Can't open output file to write script";
         print SCRIPT $script_test;
         close SCRIPT;
         system("chmod u+rwx $script_name");
@@ -439,7 +436,7 @@ __END__
 
 =head1 NAME
 
-tbljoin - join two tabular files on specified columns
+tbljoin - Join two tabular files on specified columns
 
 =head1 SYNOPSIS
 
@@ -455,39 +452,39 @@ default: try any of '\t', ' ', ','
 
 =item B<-e>
 
-do not execute join; insted, print script to stdout
+Do not execute join; insted, print script to stdout
 
 =item B<-h>
 
-show this help message
+Show this help message
 
 =item B<-k> <column spec>
 
-comma-delimited list of column names to join on. Without this option specified, join on all columns with the same name. To join columns with different names, use <nameFile1>=<nameFile2>.
+Comma-delimited list of column names to join on. Without this option specified, join on all columns with the same name. To join columns with different names, use <nameFile1>=<nameFile2>.
 
 =item B<-l>
 
-left join (non-matching lines from first file are included)
+Left join (non-matching lines from first file are included)
 
 =item B<-lr>
 
-outer join (all non-matching lines are included; join default behavior: inner join)
+Outer join (all non-matching lines are included; join default behavior: inner join)
 
 =item B<-m>
 
-print manual page
+Print manual page
 
 =item B<-n> <null string>
-	
-value to be filled in for unmatched columns in outer join (default: 'NA')
+        
+Value to be filled in for unmatched columns in outer join (default: 'NA')
 
 =item B<-o> <output file>
 
-default: STDOUT
+Default: STDOUT
 
 =item B<-r>
 
-right join (non-matching lines from second file included)
+Right join (non-matching lines from second file included)
 
 =item B<-t> <directory>
 
@@ -496,7 +493,7 @@ Default: current directory
 
 =item B<-v>
 
-verbose
+Verbose
 
 =back
 
@@ -506,11 +503,12 @@ Join two tabular files.
 
 This program translates the given command line options into a sequence of unix commands (notably 'join' and 'sort'), and immediately executes it (unless the opton '-e' is specified).
 
+t assumes the first line of the files contain the column names, which can be referred to in the command.
+
 In contrast to unix join, the input files don't have to be pre-sorted, and multiple join columns can be specified.
 
 Duplicate key columns are omitted; in 'l'-mode or if no join type option is specified, the key columns from the second file are removed (conversely for '-r').For full outer join ('-lr'), the key columns come first in the output.
 
-Assumption: the first line of the file contains the column names.
 
 =head1 EXAMPLES
 

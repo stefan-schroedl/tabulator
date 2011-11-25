@@ -23,9 +23,11 @@ import copy
 from optparse import OptionParser
 import re
 from math import *
+from random import random
+import csv
 
 debugFlag   = False
-verboseFlag = False 
+verboseFlag = False
 numOnlyFlag = True   # ignore non-numeric values?
 gzFlag      = False  # input file compressed?
 
@@ -91,45 +93,48 @@ def ifThenElse(a,b,c):
 ########################################################
 # primitives
 
+def typeNum(x):
+    return (type(x) is float or type(x) is int)
+
 def mapMin(x,y):
-    if not (type(x) is float):
+    if not typeNum(x):
         return y
     return min(x,y)
 
 def mapMax(x,y):
-    if not (type(x) is float):
+    if not typeNum(x):
         return y
     return max(x,y)
 
 def mapAdd(x,y):
-    if not (type(x) is float):
+    if not typeNum(x):
         return y
     return x + y
 
 def mapInc(x,y):
-    if (numOnlyFlag and not (type(x) is float)):
+    if (numOnlyFlag and not typeNum(x)):
         return y
     return 1 + y
 
 def mapFirst(x,y):
-    if (y=='NA'  and not (numOnlyFlag and not (type(x) is float))):
+    if (y=='NA'  and not (numOnlyFlag and not typeNum(x))):
         return x
     else:
         return y
 
 def mapLast(x,y):
-    if (numOnlyFlag and not (type(x) is float)):
+    if (numOnlyFlag and not typeNum(x)):
         return y
     return x
 
 def mapList(x,y):
-    if (numOnlyFlag and not (type(x) is float)):
+    if (numOnlyFlag and not typeNum(x)):
         return y
     y.append(x)
     return y
 
 def mapDict(x,y):
-    if not (numOnlyFlag and not (type(x) is float)):
+    if not (numOnlyFlag and not typeNum(x)):
         y[x]=y.get(x,0)+1
     return y
 
@@ -209,7 +214,7 @@ def markMatchingBracket(expr, pos):
             break
         pos += 1
     if (pos >= len(expr)):
-        sys.stderr.write('error in markMatchingBracket\n')
+        sys.stderr.write('Error in markMatchingBracket\n')
         sys.exit(2)
     level = 1
     pos2 = pos + 1
@@ -258,7 +263,7 @@ def replaceSyntacticSugar(expr):
         while (changed):
             changed = False
             if (debugFlag):
-                sys.stderr.write('trying to match syntactic sugar: ' + reStr + ' in: ' + expOut + '\n')
+                sys.stderr.write('Trying to match syntactic sugar: ' + reStr + ' in: ' + expOut + '\n')
             mo = cre.search(expOut)
             if mo:
 
@@ -266,7 +271,7 @@ def replaceSyntacticSugar(expr):
                 subex = mo.group(0)
                 args = mo.group(1)
                 if (debugFlag):
-                    sys.stderr.write('syntactic sugar parse: subex = ' + subex + ', args = ' + args + '\n')
+                    sys.stderr.write('Syntactic sugar parse: subex = ' + subex + ', args = ' + args + '\n')
 
 
                 repl = fctSugar[fct]
@@ -316,7 +321,7 @@ def parseExpression(expr, colNames):
     colNamesLen.sort()
     colNamesLen.reverse()
     if (debugFlag):
-        sys.stderr.write('colNames: [' + ','.join([str(colNames[x]) for (i,x) in colNamesLen]) + ']\n')
+        sys.stderr.write('ColNames: [' + ','.join([str(colNames[x]) for (i,x) in colNamesLen]) + ']\n')
 
     colsInput = [] # list variables occurring in right-hand side expressions
 
@@ -332,7 +337,7 @@ def parseExpression(expr, colNames):
             colsInput.append(idx)
 
     if (debugFlag):
-        sys.stderr.write('colsInput: [' + ','.join([str(x) for x in colsInput]) + ']\n')
+        sys.stderr.write('ColsInput: [' + ','.join([str([x,colNames[x]]) for x in colsInput]) + ']\n')
 
     # resolve all aggregation functions
 
@@ -340,7 +345,7 @@ def parseExpression(expr, colNames):
 
     fctList = '|'.join(fctPrim.keys())
     if (debugFlag):
-        sys.stderr.write('regex: ' +  '('+ fctList + ')\{([^{}]*)\}' + '\n')
+        sys.stderr.write('Regex: ' +  '('+ fctList + ')\{([^{}]*)\}' + '\n')
     cre = re.compile(r'\b('+fctList+r')\{([^{}]*)\}')
 
     mapExp = []
@@ -352,7 +357,7 @@ def parseExpression(expr, colNames):
         changed = False
         # search for next aggregate function name
         if (debugFlag):
-            sys.stderr.write('trying to match\n')
+            sys.stderr.write('Trying to match\n')
         mo = cre.search(expOut)
         if mo:
             changed = True
@@ -361,7 +366,7 @@ def parseExpression(expr, colNames):
             arg     = mo.group(2)
 
             if (debugFlag):
-                sys.stderr.write('parse: subex = ' + subex + ', function = ' + fct + ', arg = ' + arg + '\n')
+                sys.stderr.write('Parse: subex = ' + subex + ', function = ' + fct + ', arg = ' + arg + '\n')
 
             # create new auxiliary variable
             v = len(mapExp)
@@ -372,16 +377,21 @@ def parseExpression(expr, colNames):
 
             subex2 = fctPrim[fct] + '(' + arg + ','+ accuVarStr + ')'
 
-
             mapExp.append(subex2)
             colsInit.append(fctInit[fct])
 
     if (debugFlag):
-        sys.stderr.write('compute expression: [' + ','.join(mapExp) + ']\n')
+        sys.stderr.write('Compute expression: [' + ','.join(mapExp) + ']\n')
+
+    # hacky way to determine if reduce expression depends on other columns directly (strictly, this should be forbidden)
+    directDependency = ('colsCur' in expOut)
+    if (debugFlag):
+        sys.stderr.write('Direct dependency detected: ' + expOut + '\n')
+    
     evalLine = compile('[' + ','.join(mapExp) + ']', '<string>', 'eval') # this is the update expression executed for each line
 
     if (debugFlag):
-        sys.stderr.write('out expression: ' + expOut + '\n')
+        sys.stderr.write('Out expression: ' + expOut + '\n')
 
     # now split output expression
     # note: there might be commas within expressions! first, look for variable assignments
@@ -395,15 +405,15 @@ def parseExpression(expr, colNames):
     for i in range(numExp):
         tmp = assign[i].split('=',1)
         if (len(tmp)!= 2):
-            sys.stderr.write('error in expression syntax, expected: name=exp [' + assign[i] + ']\n')
+            sys.stderr.write('Error in expression syntax, expected: name=exp [' + assign[i] + ']\n')
             sys.exit(1)
         lhs[i] = tmp[0]
         rhs [i] = tmp[1]
 
     if (debugFlag):
-        sys.stderr.write('output compile expression: [' + ','.join(rhs) + ']\n')
+        sys.stderr.write('Output compile expression: [' + ','.join(rhs) + ']\n')
     evalFinal = compile('[' + ','.join(rhs) + ']', '<string>', 'eval') # this is the expression calculated just before output
-    return (lhs, evalLine, evalFinal, colsInit, colsInput)
+    return (lhs, evalLine, evalFinal, colsInit, colsInput, directDependency)
 
 #######################################################################
 # guess separator from header
@@ -434,12 +444,51 @@ def findKeys(keySpec, colNames):
     try:
         colsKey = [colNames.index(key) for key in keyNames]
     except ValueError:
-        print 'key not found: ' + key
+        sys.stderr.write('Key not found: ' + key + '\n')
         sys.exit(2)
     colsNonKey = [item for item in range(numCols) if not item in colsKey]
     return (colsKey, colsNonKey)
 
-######################################################################
+#####################################################################
+# extract columns from line
+
+# note: this is just a heuristic way to deal with quotes
+# the better way would be to use the csv package, but
+# we only do a shallow parsing in the interest of speed
+# (and want to tolerate inconsistent quotes to some degree
+
+def splitCols(line, delim, expectedCols):
+ 
+    cols = (line.rstrip('\n')).split(delim)
+    if (len(cols) == expectedCols):
+        return cols
+    if (len(cols) < expectedCols):
+        return cols
+    
+    # try to fix by identifying delimiters inside of quotes
+    
+    levelSQuote = 0
+    levelDQuote = 0
+    newCols = [cols[0]]
+    cntSQuote = 0
+    cntDQuote = 0
+    
+    for i in range(len(cols)-1):
+        col = cols[i]
+        
+        cntSQuote += col.count("'") - col.count("\\'") # number of non-quoted single quotes seen so far
+        cntDQuote += col.count('"') - col.count('\\"') # number of non-quoted double quotes seen so far
+        
+        if (cntSQuote % 2) or (cntDQuote % 2):
+           # somewhere inside quotation - undo split
+           newCols[-1] += delim + cols[i+1]
+        else:
+            newCols.append(cols[i+1])
+    
+    return newCols
+
+
+#####################################################################
 # aggregation in arbitrary order using a dictionary
 
 def aggregateNonSequential(f, colsKey, numCols, delim, evalLine, colsInit, colsInput ):
@@ -450,15 +499,17 @@ def aggregateNonSequential(f, colsKey, numCols, delim, evalLine, colsInit, colsI
     colsAccu = copy.deepcopy(colsInit)
 
     for line in f:
-        cols = (line.rstrip('\n')).split(delim)
+
         countLine += 1
+
+        cols = splitCols(line, delim, numCols)
+
+        if (len(cols) != numCols):
+            sys.stderr.write('Warning: wrong number of columns in line ' + str(countLine) + ' (' + str(len(cols)) + ' != ' + str(numCols) + ')\n' + '/'.join(cols) + '\n')
+            continue
 
         if (verboseFlag and (countLine % 100000 == 0)):
             sys.stderr.write(str(countLine) + '\n')
-
-        if (len(cols) != numCols):
-            sys.stderr.write('warning: wrong number of columns in line ' + str(countLine) + ' (' + str(len(cols)) + ' != ' + str(numCols) + ')\n')
-            sys.exit(1)
 
         colsCur = [safeConvert(cols[x]) for x in colsInput ]
 
@@ -482,7 +533,7 @@ def aggregateNonSequential(f, colsKey, numCols, delim, evalLine, colsInit, colsI
 ######################################################################
 # aggregation, assuming all identical keys occur in contiguous lines
 
-def aggregateSequential(f, colsKey, numCols, delim, uniqueFlag, numExp, evalLine, evalFinal, colsInit, colsInput ):
+def aggregateSequential(f, colsKey, numCols, delim, uniqueFlag, numExp, evalLine, evalFinal, colsInit, colsInput, directDependency ):
     countLine = 0
 
     keysLast = []
@@ -493,16 +544,17 @@ def aggregateSequential(f, colsKey, numCols, delim, uniqueFlag, numExp, evalLine
     for line in f:
         #print line
         line = line.rstrip('\n')
-        cols = line.split(delim)
+
         countLine += 1
+
+        cols = splitCols(line, delim, numCols)
+
+        if (len(cols) != numCols):
+            sys.stderr.write('Warning: wrong number of columns in line ' + str(countLine) + ' (' + str(len(cols)) + ' != ' + str(numCols) + ')\n' + '/'.join(cols) + '\n')
+            continue
 
         if (verboseFlag and (countLine % 100000 == 0)):
             sys.stderr.write(str(countLine) + '\n')
-
-        if (len(cols) != numCols):
-            sys.stderr.write('warning: wrong number of columns in line ' + str(countLine) + ' (' + str(len(cols)) + ' != ' + str(numCols) + ')\n')
-
-            continue
 
         keys = [cols[index] for index in colsKey]
 
@@ -517,37 +569,52 @@ def aggregateSequential(f, colsKey, numCols, delim, uniqueFlag, numExp, evalLine
                     colsEval = eval(evalFinal, globals(), {'colsCur':lastLine, 'accu':colsAccu})
                 except Exception:
                     if (verboseFlag):
-                        sys.stderr.write('eval error in line ' + str(countLine) + ' (' + str(sys.exc_info()[0]) + ')\n')
+                        sys.stderr.write('Eval error in line ' + str(countLine) + ' (' + str(sys.exc_info()[0]) + ')\n')
 
                     colsEval = [NAN] * numExp
-
-                print delim.join(keysLast) + delim + delim.join([str(x) for x in colsEval])
+                print delim.join([str(x) for x in (keysLast + colsEval)])
             else:
                 # not unique
-                for lineSaved in linesLast:
-                     cols = lineSaved.split(delim)
-                     colsCur = [safeConvert(cols[x]) for x in colsInput ]
 
-                     try:
-                         colsEval = eval(evalFinal, globals(), {'colsCur':colsCur, 'accu':colsAccu})
-                     except Exception:
-                         if (verboseFlag):
-                             sys.stderr.write('eval error in line ' + str(countLine) + ' (' + str(sys.exc_info()[0]) + ')\n')
+                if (directDependency):
+                    # direct dependency, computed columns have to be reevaluated
 
-                         colsEval = [NAN] * numExp
+                    for lineSaved in linesLast:
+                        cols = lineSaved.split(delim)
+                        colsCur = [safeConvert(cols[x]) for x in colsInput ]
 
-                     print lineSaved + delim +  delim.join([str(x) for x in colsEval])
+                        try:
+                            colsEval = eval(evalFinal, globals(), {'colsCur':colsCur, 'accu':colsAccu})
+                        except Exception:
+                            if (verboseFlag):
+                                sys.stderr.write('Eval error in line ' + str(countLine) + ' (' + str(sys.exc_info()[0]) + ')\n')
+
+                            colsEval = [NAN] * numExp
+
+                        print lineSaved + delim +  delim.join([str(x) for x in colsEval])
+                else:
+                    # no direct dependency - computed columns identical for all lines in group
+                    try:
+                        colsEval = eval(evalFinal, globals(), {'accu':colsAccu})
+                    except Exception:
+                        if (verboseFlag):
+
+                            sys.stderr.write('Eval error in line ' + str(countLine) + ' (' + str(sys.exc_info()[0]) + ')\n')
+                        colsEval = [NAN] * numExp
+
+                    colsEvalString = delim.join([str(x) for x in colsEval])
+                    for lineSaved in linesLast:
+                        print lineSaved + delim +  colsEvalString
 
             # reset
 
             colsAccu = copy.deepcopy(colsInit)
             linesLast = []
 
-
         try:
             colsAccu = eval(evalLine, globals(), {'colsCur':colsCur, 'accu':colsAccu})
         except ArithmeticError:
-            sys.stderr.write('warning: arithmetic error in line ' + str(countLine) + ' (' + str(sys.exc_info()[0]) + ')\n')
+            sys.stderr.write('Warning: arithmetic error in line ' + str(countLine) + ' (' + str(sys.exc_info()[0]) + ')\n')
 
         keysLast = keys
         lastLine = colsCur[:] # copy
@@ -563,31 +630,49 @@ def aggregateSequential(f, colsKey, numCols, delim, uniqueFlag, numExp, evalLine
             colsEval = eval(evalFinal, globals(), {'colsCur':lastLine, 'accu':colsAccu})
         except Exception:
             if (verboseFlag):
-                sys.stderr.write('eval error in line ' + str(countLine) + ' (' + str(sys.exc_info()[0]) + ')\n')
+                sys.stderr.write('Eval error in line ' + str(countLine) + ' (' + str(sys.exc_info()[0]) + ')\n')
             colsEval = [NAN] * numExp
-
-        print delim.join(keysLast) + delim +  delim.join([str(x) for x in colsEval])
+        print delim.join([str(x) for x in (keysLast + colsEval)])
     else:
         # not uniq
-        for lineSaved in linesLast:
-            cols = lineSaved.split(delim)
-            colsCur = [safeConvert(cols[x]) for x in colsInput ]
 
+        if (directDependency):
+            # direct dependency, computed columns have to be reevaluated
+            
+            for lineSaved in linesLast:
+                cols = lineSaved.split(delim)
+                colsCur = [safeConvert(cols[x]) for x in colsInput ]
+
+                try:
+                    colsEval = eval(evalFinal, globals(), {'colsCur':colsCur, 'accu':colsAccu})
+                except Exception:
+                    if (verboseFlag):
+                        sys.stderr.write('Eval error in line ' + str(countLine) + ' (' + str(sys.exc_info()[0]) + ')\n')
+                    colsEval = [NAN] * numExp
+
+                print lineSaved + delim +  delim.join([str(x) for x in colsEval])
+
+        else:
+        # no direct dependency
             try:
-                colsEval = eval(evalFinal, globals(), {'colsCur':colsCur, 'accu':colsAccu})
+                colsEval = eval(evalFinal, globals(), {'accu':colsAccu})
             except Exception:
                 if (verboseFlag):
-                    sys.stderr.write('eval error in line ' + str(countLine) + ' (' + str(sys.exc_info()[0]) + ')\n')
+                    sys.stderr.write('Eval error in line ' + str(countLine) + ' (' + str(sys.exc_info()[0]) + ')\n')
                 colsEval = [NAN] * numExp
 
-            print lineSaved + delim + delim.join([str(x) for x in colsEval])
+            colsEvalString = delim.join([str(x) for x in colsEval])
+            for lineSaved in linesLast:
+                print lineSaved + delim +  colsEvalString
 
 
 ######################################################################
-def outputAggregatesNonUnique(f, colsKey, dictAccu, delim, numExp, evalFinal, colsInit, colsInput):
+def outputAggregatesNonUnique(f, colsKey, dictAccu, delim, numExp, evalFinal, colsInit, colsInput, directDependency):
+
     countLine = 0
     lastKeyStr = ''
     colsAccu = copy.deepcopy(colsInit)
+    colsEvalString = ''
     for line in f:
         countLine += 1
         line = line.strip()
@@ -597,25 +682,36 @@ def outputAggregatesNonUnique(f, colsKey, dictAccu, delim, numExp, evalFinal, co
 
         cols = line.split(delim)
 
-        colsCur = [safeConvert(cols[x]) for x in colsInput ]
-
         keyStr = delimKey.join([cols[index] for index in colsKey])
         if keyStr != lastKeyStr:
             try:
                 colsAccu = dictAccu[keyStr]
             except KeyError:
-                sys.stderr.write('error: couldnt find key in line ' + str(countLine) + '\n')
+                sys.stderr.write('Error: couldnt find key in line ' + str(countLine) + '\n')
                 sys.exit(1)
 
-        try:
-            colsEval = eval(evalFinal, globals(), {'colsCur':colsCur, 'accu':colsAccu})
-        except Exception:
-           if (verboseFlag):
-                sys.stderr.write('eval error in line ' + str(countLine) + ' (' + str(sys.exc_info()[0]) + ')\n')
-           colsEval = [NAN] * numExp
+            if (not directDependency):
+                try:
+                    colsEval = eval(evalFinal, globals(), {'accu':colsAccu})
+                except Exception:
+                    if (verboseFlag):
+                        sys.stderr.write('Eval error in line ' + str(countLine) + ' (' + str(sys.exc_info()[0]) + ')\n')
+                    colsEval = [NAN] * numExp
+
+                colsEvalString = delim.join([str(x) for x in colsEval])
+
+        if (directDependency):
+            colsCur = [safeConvert(cols[x]) for x in colsInput ]
+            try:
+                colsEval = eval(evalFinal, globals(), {'colsCur':colsCur, 'accu':colsAccu})
+            except Exception:
+                if (verboseFlag):
+                    sys.stderr.write('Eval error in line ' + str(countLine) + ' (' + str(sys.exc_info()[0]) + ')\n')
+                colsEval = [NAN] * numExp
+            colsEvalString = delim.join([str(x) for x in colsEval])
 
         # output line
-        print line + delim +  delim.join([str(x) for x in colsEval])
+        print line + delim + colsEvalString
 
         lastKeyStr = keyStr
     f.close()
@@ -630,18 +726,16 @@ def outputAggregatesUnique(dictAccu, delim, numExp, evalFinal, colsInput):
         colsAccu = dictAccu[keyStr]
         cols = keyStr.split(delimKey)
 
-        # dummy inputs, shouldn't be used
-        colsCur = [ 0.0 ] * len(colsInput)
-
         try:
-            colsEval = eval(evalFinal, globals(), {'colsCur':colsCur, 'accu':colsAccu})
+            colsEval = eval(evalFinal, globals(), {'accu':colsAccu})
         except Exception:
             if (verboseFlag):
-                sys.stderr.write('eval error (' + str(sys.exc_info()[0]) + ')\n')
+                sys.stderr.write('Eval error (' + str(sys.exc_info()[0]) + ')\n')
             colsEval = [NAN] * numExp
 
         #output line
-        print delim.join(cols) + delim + delim.join([str(x) for x in colsEval])
+
+        print delim.join([str(x) for x in (cols + colsEval)])
 
 
 #####################################################################
@@ -649,15 +743,17 @@ def main():
     global numOnlyFlag
     global verboseFlag
     global gzFlag
-    usage = 'usage: %prog [cdhknsuv] file'
-    description = """compute aggregation expression. Assumption: the first line in the file contains the column names. Example: tblgroup -k'region' 'sales_ratio=sales/sum(sales)' computes for each line proportion of column 'sales' to total for all lines with the same value of column 'region'.
+    usage = 'Usage: %prog [cdhknsuv] file'
+    description = """Compute expression(s) for each line, or for groups of lines with common keys (aggregation). In map-reduce terminology, this operation is similar to a "reduce" operation. 
+
+                    It assumes that the first line in the file contains the column names, which can be referred to in expressions. Example: tblred -k'region' 'sales_ratio=sales/sum(sales)' computes for each line proportion of column 'sales' to total, for all lines with the same value of column 'region'.
 
     Note: to be used as a filter, either '-u' or '-s' needs to be specified so that aggregates can be computed in one pass.
     """
     parser = OptionParser(usage=usage,description=description)
     parser.add_option('-c', '--compute', dest='exp',
                       help =
-                      """aggregation expressions of the form name1=exp1,name2=exp2,.., where the (Python) expressions can contain any of the following aggregation functions:
+                      """Aggregation expressions of the form name1=exp1,name2=exp2,.., where the expressions (in Python syntax) can contain any of the following aggregation functions:
                       
                       min(.),
                       max(.),
@@ -679,37 +775,37 @@ def main():
                       """)
     parser.add_option('-d', '--delimiter', dest='delim',
                       help =
-                      '''column delimiter in input file.
+                      '''Column delimiter in input file.
                       Try to guess if unspecified''')
     parser.add_option('-k', '--key', dest='keySpec',
                       help =
-                      '''comma-separated list of aggregation key columns.
+                      '''Comma-separated list of aggregation key columns.
                       Operate on entire file if unspecified.
                       Use '*' to operate on each line.
                       ''',
                       default='')
     parser.add_option('-n', '--nonnumeric', action='store_true', dest='nonNum', default=False,
                       help =
-                      '''don't ignore non-numeric values.
+                      '''Don't ignore non-numeric values.
                       This is useful for functions: first, last, count_distinct, and mode.
                       Example: find number of distinct first names for given last name:
-                      tblgroup -uk'last_name' -c'c=count_distinct(first_name)'
+                      tblred -uk'last_name' -c'c=count_distinct(first_name)'
 
                       Without this option, lines with non-numeric values are ignored.
                       ''')
     parser.add_option('-s', '--sequential', action='store_true', dest='sequentialFlag', default=False,
                       help =
-                      '''assume keys are contiguous in file (e.g., sorted).
+                      '''Assume keys are contiguous in file (e.g., sorted).
                       This makes the program run faster, but will produce wrong results if keys are not contiguous.
                       ''')
     parser.add_option('-u', '--uniq', action='store_true', dest='uniqueFlag', default=False,
                       help =
-                      '''output only one line per key.
+                      '''Output only one line per unique key.
                       Output consists of key columns and computed expressions.
-                      If unspecified, output consists of full input lines, plus computed columns.
+                      If unspecified, output consists of full input lines, joined with computed columns.
                       ''')
     parser.add_option('-v', '--verbose', action='store_true', dest='verboseFlag', default=False,
-                      help ='print verbose comments')
+                      help ='Print verbose comments')
 
 
     (opt, args) = parser.parse_args()
@@ -722,7 +818,7 @@ def main():
         opt.sequentialFlag = True
 
     if opt.exp is None:
-        print 'Please specify an expression to compute'
+        sys.stderr.write('Please specify an expression to compute\n')
         parser.print_help()
         sys.exit(1)
             
@@ -742,11 +838,11 @@ def main():
     else:
         # try to read stdin
         if (not (opt.sequentialFlag or opt.uniqueFlag)):
-            sys.stderr.write('error: reading from stdin only possible in conjunction with -s or -u\n')
+            sys.stderr.write('Error: reading from stdin only possible in conjunction with -s or -u\n')
             sys.exit(2)
         f = sys.stdin
         if f.isatty():
-            print 'Please specify an input file'
+            sys.stderr.write('Please specify an input file\n')
             parser.print_help()
             sys.exit(1)
 
@@ -763,11 +859,15 @@ def main():
     (colsKey, colsNonKey) = findKeys(opt.keySpec, colNames)
 
     if (debugFlag):
-        sys.stderr.write(' key cols: ' + ','.join([str(x) for x in colsKey]) + '\n')
+        sys.stderr.write(' Key cols: ' + ','.join([str(x) for x in colsKey]) + '\n')
 
-    (lhs, evalLine, evalFinal, colsInit, colsInput) = parseExpression(opt.exp, colNames)
+    (lhs, evalLine, evalFinal, colsInit, colsInput, directDependency) = parseExpression(opt.exp, colNames)
 
     if (opt.uniqueFlag):
+        if directDependency:
+            sys.stderr.write('Error: expression depends on individual records, cannot be used with -u option\n')
+            sys.exit(1)
+
         newColNames = [colNames[x] for x in colsKey]
     else:
         newColNames = colNames[:]
@@ -778,17 +878,20 @@ def main():
     print delim.join(newColNames)
 
     if (opt.sequentialFlag):
-        aggregateSequential(f, colsKey, len(colNames), delim, opt.uniqueFlag, len(lhs), evalLine, evalFinal, colsInit, colsInput)
+
+        aggregateSequential(f, colsKey, len(colNames), delim, opt.uniqueFlag, len(lhs), evalLine, evalFinal, colsInit, colsInput, directDependency)
+
     else:
+
         dictAccu = aggregateNonSequential(f, colsKey, len(colNames), delim, evalLine, colsInit, colsInput)
-        if (not opt.uniqueFlag):
-        
+
+        if (not opt.uniqueFlag):        
             # rewind
             if (gzFlag):
                 f = os.popen('zcat ' + filename)
             else:
                 f = file(filename, 'r')    
-            outputAggregatesNonUnique(f, colsKey, dictAccu, delim, len(lhs), evalFinal, colsInit, colsInput)
+            outputAggregatesNonUnique(f, colsKey, dictAccu, delim, len(lhs), evalFinal, colsInit, colsInput, directDependency)
         else:
             outputAggregatesUnique(dictAccu, delim, len(lhs), evalFinal, colsInput)
 

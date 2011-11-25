@@ -1,2 +1,17 @@
+Version 1.1.0-alpha (11/25/2011)
+   * Renamed tblgen to tblmap, tblgroup to tblred to reflect map/reduce analogy
+   * Improved tbldesc features:
+      * Sort option
+      * Missing values/ p-values for missing-at-random
+      * Adjusted R statistic, both for linear and caegorical features
+      * Example values sorted by frequency
+   * Improved tlbcmd to have column name replacement on command line
+   * A number of bug fixes
+      * Proper handling of utf8 characters 
+      * Proper handling of nan values
+      * Proper handling of delimiters
+      * tbljoin to work with duplicate column names
+      * Other small bugs
+
 Version 1.0.0-alpha (6/16/2009)
    * Inital check in

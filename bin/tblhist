@@ -36,25 +36,11 @@ sub guess_delim
 {
     my $line = shift;
 
-    my $delim = "\t";
-
-    if ( $line =~ m/,/ )
+    for my $delim ( "\t", ",", " ", "" )
     {
-        $delim = ',';
+        return $delim if ( $line =~ m/$delim/ );
     }
-    elsif ( $line =~ m/\t/ )
-    {
-        $delim = "\t";
-    }
-    elsif ( $line =~ m/ / )
-    {
-        $delim = ' ';
-    }
-    elsif ( $line =~ m// )
-    {
-        $delim = '';
-    }
-    return $delim;
+    return "\t";
 }
 
 #
@@ -94,7 +80,7 @@ sub parse_options()
     if ( $opt{'n'} )
     {
         $num_bins_opt = $opt{'n'};
-        die "error: you cannot specify -b and -n simultaneously"
+        die "Error: you cannot specify -b and -n simultaneously"
           if ( $opt{'b'} );
     }
 }
@@ -116,8 +102,7 @@ sub process_header
 
     $delim = guess_delim($header) if ( !$opt{'d'} );
 
-
-    @fields = map { s/^\s+//; s/\s$//; lc($_); } split( /\t/, $header );
+    @fields = map { s/^\s+//; s/\s$//; lc($_); } split( /$delim/, $header );
 
     if ( $#fields == 0 )
     {
@@ -141,7 +126,7 @@ sub process_header
         $no_header = 1;
     }
 
-    die "error: target column not found: $key_spec" if ( $key_col == -1 );
+    die "Error: target column not found: $key_spec" if ( $key_col == -1 );
 }
 
 #
@@ -161,7 +146,7 @@ sub scan_bounds
         chomp;
         @fields = split $delim, $_;
         my $val = $fields[$key_col];
-        next unless ( looks_like_number($val) );
+        next unless ( $val == $val && looks_like_number($val) );
         $count_lines++;
         $min_val = $val if ( $min_val > $val );
         $max_val = $val if ( $max_val < $val );
@@ -183,9 +168,9 @@ sub process_file
     while (<$infile>)
     {
         chomp;
-        @fields = split $delim, $_ ;
+        @fields = split $delim, $_;
         my $val = $fields[$key_col];
-        next unless ( looks_like_number($val) );
+        next unless ( $val == $val && looks_like_number($val) );
 
         $val = $min_val if $val < $min_val;
         $val = $max_val if $val > $max_val;
@@ -210,7 +195,7 @@ sub print_report
 {
 
     print
-"histogram of $filename (column '$key_spec'): lines: $count_lines; key_spec: $key_spec; field: $key_col min: $min_val max: $max_val avg: "
+"Histogram of $filename (column '$key_spec'): lines: $count_lines; key_spec: $key_spec; field: $key_col min: $min_val max: $max_val avg: "
       . ( $sum / $count_lines ) . "\n";
     print "bin\t    left\tcount\t     %\t    cum %\n";
     my $cum = 0;
@@ -257,24 +242,28 @@ sub main
     scan_bounds();
     $min_val = $min_cutoff if ( $min_val < $min_cutoff );
     $max_val = $max_cutoff if ( $max_val > $max_cutoff );
+
     if ( $bin_size == -1 )
     {
-        if ($num_bins_opt == -1)
+        if ( $num_bins_opt == -1 )
         {
+
             # default if no bin size specified
-            if ($count_lines < 3)
+            if ( $count_lines < 3 )
             {
                 $num_bins_opt = $count_lines;
             }
             else
             {
-               
-                $num_bins_opt = int(sqrt($count_lines-1)-1);
-                $num_bins_opt=$count_lines if ($count_lines < $num_bins_opt);
+
+                $num_bins_opt = int( sqrt( $count_lines - 1 ) - 1 );
+                $num_bins_opt = $count_lines
+                  if ( $count_lines < $num_bins_opt );
             }
         }
-       
-        $bin_size = ($max_val - $min_val ) / $num_bins_opt;
+
+        $bin_size = ( $max_val - $min_val ) / $num_bins_opt;
+
         # right border of last bucket is inclusive
         $cutoff_bucket = int( $max_val / $bin_size ) - 1;
     }
@@ -288,11 +277,11 @@ __END__
 
 =head1 NAME
 
-tblhist - histogram from a tab-separated file.
+tblhist - Histogram from a tab-separated file.
 
 =head1 SYNOPSIS
 
-B<tblhist>	S<[ B<-abcCdhkmnw> ] file>
+B<tblhist>      S<[ B<-abcCdhkmnw> ] file>
 
 =head1 OPTIONS
 
@@ -300,47 +289,47 @@ B<tblhist>	S<[ B<-abcCdhkmnw> ] file>
 
 =item B<-a>
 
-"ascii art" plotting
+"Ascii art" plotting
 
 =item B<-b>
 
-bin size
+Bin size
 
 =item B<-c>
 
-lower cutoff value
+Lower cutoff value
 
 =item B<-C>
 
-upper cutoff value
+Upper cutoff value
 
 =item B<-d> <column delimiter>
 
-default: try any of '\t', ' ', ','
+Default: try any of '\t', ' ', ','
 
 =item B<-h>
 
-show this help message
+Show this help message
 
 =item B<-k>
 
-column name
+Column name
 
 Assumption: the first line of the file contains column names, or the specified column is a column index (first column = 0)
 
 =item B<-m>
 
-print manual page
+Print manual page
 
 =item B<-n>
 
-number of bins
+Number of bins
 
 At most one of the '-n','-b' options can be specified
 
 =item B<-w>
 
-screen width for ascii plotting
+Screen width for ascii plotting
 
 =back
 

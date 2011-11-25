@@ -45,7 +45,7 @@ sub parse_options()
     }
     else
     {
-        print "no split column specified, exiting\n";
+        print "No split column specified, exiting\n";
         pod2usage(2);
     }
 
@@ -74,26 +74,16 @@ sub parse_options()
     pod2usage(2) if ( $#names_key == -1 );
 }
 
+# guess file delimiter from header line
 sub guess_delim
 {
-    my $header = shift;
-    if ( $header =~ m// )
+    my $line = shift;
+
+    for my $delim ( "\t", ",", " ", "" )
     {
-        $delim = '';
+        return $delim if ( $line =~ m/$delim/ );
     }
-    elsif ( $header =~ m/,/ )
-    {
-        $delim = ',';
-    }
-    elsif ( $header =~ m/\t/ )
-    {
-        $delim = "\t";
-    }
-    elsif ( $header =~ m/ / )
-    {
-        $delim = ' ';
-    }
-    return $delim;
+    return "\t";
 }
 
 # read and store column names
@@ -101,15 +91,13 @@ sub process_header
 {
     my $file = shift;
 
-    #open(INFILE, $file) or die "Couldn't open '$file'";
-
     $infile->open( $opt_gz ? "gunzip -c $file |" : $file )
       or die "Couldn't open '$file'";
 
+    binmode( $infile, ":utf8" );
+
     ## Get field names from first line
     my $header = <$infile>;
-
-    #close($infile);
 
     chomp($header);
 
@@ -157,7 +145,7 @@ sub process_header
                 push @cols_nonkey, $i;
             }
         }
-        die "error: key column not found: $name_key" unless ($found);
+        die "Error: key column not found: $name_key" unless ($found);
     }
 
     # construct output header
@@ -283,7 +271,7 @@ __END__
 
 =head1 NAME
 
-tblsplit - split a file into several subfiles based on the value of a key column
+tblsplit - Split a file into several subfiles based on the value of a key column
 
 =head1 SYNOPSIS
 
@@ -295,32 +283,31 @@ B<tblsplit>  S<[ B<dihkmor> ] file>
 
 =item B<-d> <column delimiter>
 
-default: try any of '\t', ' ', ','
+Default: try any of '\t', ' ', ','
 
 =item B<-i>
 
-subscript output column names by split value
+Subscript output column names by split value
 
 =item B<-k> <column spec>
 
-column to split on
+Column to split on
 
 =item B<-h>
 
-show this help message
+Show this help message
 
 =item B<-m>
 
-print manual page
-
+Print manual page
 
 =item B<-o>
 
-output name (default: input name)
+Output name (default: input name)
 
 =item B<-r>
 
-exclude split column from output
+Exclude split column from output
 
 =back
 
