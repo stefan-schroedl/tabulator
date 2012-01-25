@@ -1,4 +1,4 @@
-#! /usr/bin/env perl
+#!/usr/bin/env perl
 
 use Getopt::Std;
 use Pod::Usage;
@@ -368,11 +368,12 @@ sub main
     {
 
         # use as filter
-        open( STDOUT, "| $cmd" );
 
+        open( STDOUT, "| $cmd" );
         binmode( STDOUT, ":utf8" );
 
-        print join( $delim, @names_out ) . "\n";    # header
+        print "$header\n";
+
         while (<$infile>)
         {
             print;

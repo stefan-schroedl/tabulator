@@ -1,4 +1,4 @@
-#!/bin/env perl
+#!/usr/bin/env perl
 use strict;
 use warnings;
 use Getopt::Std;
@@ -28,6 +28,7 @@ while ( my $filename = shift @ARGV )
       or die "Couldn't open '$filename'";
 
     binmode( $infile, ":utf8" );
+    binmode( STDOUT, ":utf8" );
 
     # check header
     my $next_header;

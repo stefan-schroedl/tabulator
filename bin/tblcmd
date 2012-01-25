@@ -1,4 +1,4 @@
-#!/bin/env perl
+#!/usr/bin/env perl
 use strict;
 use warnings;
 use Getopt::Std;
@@ -101,7 +101,7 @@ sub main
         $filename = '-';
     }
 
-    my $CAT = $opt_gz ? "zcat" : "cat";
+    my $CAT = $opt_gz ? "gunzip -c" : "cat";
 
     $infile->open( $opt_gz ? "gunzip -c $filename |" : $filename )
       or die "Couldn't open '$filename'";
@@ -120,24 +120,22 @@ sub main
     {
         if ( $filename eq '-' )
         {
-            print "(head -n 1 ; tail -n +1 | $cmd)\n";
+            printf( "tail -n +2 | (echo $header ; %s)\n", $cmd );
         }
         else
         {
-            print
-"($CAT $filename | head -n 1; $CAT $filename | tail -n +1 | $cmd)\n";
+            printf( "$CAT $filename | tail -n +2 | (echo $header ; %s)\n",
+                $cmd );
         }
         exit(0);
     }
     else
     {
+        binmode( STDOUT, ":utf8" );
+
         if ( $filename eq '-' )
         {
-
-            open( STDOUT, "| $cmd" );
-            binmode( STDOUT, ":utf8" );
-
-            print "$header\n";
+            open( STDOUT, sprintf( "| (echo $header ; %s)", $cmd ) );
 
             while (<$infile>)
             {
@@ -148,7 +146,8 @@ sub main
         {
             $infile->close();
             system(
-"($CAT $filename | head -n 1; $CAT $filename | tail -n +1 | $cmd)"
+                sprintf( "$CAT $filename | tail -n +2 | (echo $header ; %s)",
+                    $cmd )
             );
         }
     }

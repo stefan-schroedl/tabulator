@@ -444,7 +444,7 @@ def findKeys(keySpec, colNames):
     try:
         colsKey = [colNames.index(key) for key in keyNames]
     except ValueError:
-        sys.stderr.write('Key not found: ' + key + '\n')
+        sys.stderr.write('Column name not found: ' + key + '\n')
         sys.exit(2)
     colsNonKey = [item for item in range(numCols) if not item in colsKey]
     return (colsKey, colsNonKey)
@@ -542,7 +542,7 @@ def aggregateSequential(f, colsKey, numCols, delim, uniqueFlag, numExp, evalLine
     lastLine  = []
     linesLast = []
     for line in f:
-        #print line
+        # print line
         line = line.rstrip('\n')
 
         countLine += 1
@@ -733,7 +733,7 @@ def outputAggregatesUnique(dictAccu, delim, numExp, evalFinal, colsInput):
                 sys.stderr.write('Eval error (' + str(sys.exc_info()[0]) + ')\n')
             colsEval = [NAN] * numExp
 
-        #output line
+        # output line
 
         print delim.join([str(x) for x in (cols + colsEval)])
 
@@ -874,7 +874,7 @@ def main():
 
     newColNames.extend(lhs)
 
-    #output new header
+    # output new header
     print delim.join(newColNames)
 
     if (opt.sequentialFlag):

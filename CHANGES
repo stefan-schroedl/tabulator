@@ -1,3 +1,8 @@
+Version 1.1.1-prod (01/24/2012)
+   * Minor bug fixes:
+      * Make shebang line work more universally
+      * UTF8 output
+      * header line when reading from stding, for tblcmd and tblcat
 Version 1.1.0-alpha (11/25/2011)
    * Renamed tblgen to tblmap, tblgroup to tblred to reflect map/reduce analogy
    * Improved tbldesc features:
