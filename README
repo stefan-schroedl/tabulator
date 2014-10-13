@@ -2,11 +2,13 @@
 Welcome to Tabulator! 
 ----------------------------------------------------------------------
 URL:
-	http://tabulator.sourceforge.net
+	https://github.com/stefan-schroedl/tabulator
 Author:
-	 Stefan Schroedl <stefan.schroedl@gmx.de>
+	Stefan Schroedl <stefan.schroedl@gmx.de>
 Date:
-	2011/11/25 release 1.1
+        2014/10/12 release 1.1.2
+	2012/01/24 release 1.1.1
+	2011/11/25 release 1.1.0
 	2009/06/16 release 1.0
 
 ----------------------------------------------------------------------
@@ -41,8 +43,7 @@ directory to your PATH.
 3. License
 ----------------------------------------------------------------------
 
-Tabulator is licensed under the GNU General Public License Version 3.0
-(GPLv3), see the COPYING file for details.
+Tabulator is licensed under the MIT LICENSE, see LICENSE for details.
 
 ----------------------------------------------------------------------
 4. Implementation Notes

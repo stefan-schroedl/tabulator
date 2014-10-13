@@ -1,5 +1,7 @@
 #!/usr/bin/env perl
 
+## Copyright (C) 2009-2014 Stefan Schroedl
+
 use strict;
 use warnings;
 use Scalar::Util qw(looks_like_number);
