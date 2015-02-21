@@ -146,7 +146,7 @@ def reduceQuantile(probs,x):
         i = int(r)
         f = r - i
 
-        j = min((i,n)) 
+        j = min((i,n))
         k = min((i+1,n))
         ans[c] = (1-f)*ox[j-1] + f*ox[k-1]
     if (not listArgument):
@@ -373,7 +373,7 @@ def parseExpression(expr, colNames):
     directDependency = ('colsCur' in expOut)
     if (debugFlag):
         sys.stderr.write('Direct dependency detected: ' + expOut + '\n')
-    
+
     evalLine = compile('[' + ','.join(mapExp) + ']', '<string>', 'eval') # this is the update expression executed for each line
 
     if (debugFlag):
@@ -405,15 +405,10 @@ def parseExpression(expr, colNames):
 # guess separator from header
 
 def guessDelim(h):
-    if (h.find('\t')!=-1):
-        return '\t'
-    elif (h.find('')!=-1):
-        return ''
-    elif (h.find(',')!=-1):
-        return ','
-    elif (h.find(' ')!=-1):
-        return ' '
-    return '\t'
+    for delim in ('', '|', ',', '\t', ' '):
+        if delim in h:
+            return delim
+    raise ValueError('No delimiter found - please specify')
 
 #####################################################################
 # map variable names to column indices
@@ -444,33 +439,33 @@ def findKeys(keySpec, colNames):
 # (and want to tolerate inconsistent quotes to some degree
 
 def splitCols(line, delim, expectedCols):
- 
+
     cols = (line.rstrip('\n')).split(delim)
     if (len(cols) == expectedCols):
         return cols
     if (len(cols) < expectedCols):
         return cols
-    
+
     # try to fix by identifying delimiters inside of quotes
-    
+
     levelSQuote = 0
     levelDQuote = 0
     newCols = [cols[0]]
     cntSQuote = 0
     cntDQuote = 0
-    
+
     for i in range(len(cols)-1):
         col = cols[i]
-        
+
         cntSQuote += col.count("'") - col.count("\\'") # number of non-quoted single quotes seen so far
         cntDQuote += col.count('"') - col.count('\\"') # number of non-quoted double quotes seen so far
-        
+
         if (cntSQuote % 2) or (cntDQuote % 2):
            # somewhere inside quotation - undo split
            newCols[-1] += delim + cols[i+1]
         else:
             newCols.append(cols[i+1])
-    
+
     return newCols
 
 
@@ -624,7 +619,7 @@ def aggregateSequential(f, colsKey, numCols, delim, uniqueFlag, numExp, evalLine
 
         if (directDependency):
             # direct dependency, computed columns have to be reevaluated
-            
+
             for lineSaved in linesLast:
                 cols = lineSaved.split(delim)
                 colsCur = [safeConvert(cols[x]) for x in colsInput ]
@@ -730,7 +725,7 @@ def main():
     global verboseFlag
     global gzFlag
     usage = 'Usage: %prog [cdhknsuv] file'
-    description = """Compute expression(s) for each line, or for groups of lines with common keys (aggregation). In map-reduce terminology, this operation is similar to a "reduce" operation. 
+    description = """Compute expression(s) for each line, or for groups of lines with common keys (aggregation). In map-reduce terminology, this operation is similar to a "reduce" operation.
 
                     It assumes that the first line in the file contains the column names, which can be referred to in expressions. Example: tblred -k'region' 'sales_ratio=sales/sum(sales)' computes for each line proportion of column 'sales' to total, for all lines with the same value of column 'region'.
 
@@ -740,7 +735,7 @@ def main():
     parser.add_option('-c', '--compute', dest='exp',
                       help =
                       """Aggregation expressions of the form name1=exp1,name2=exp2,.., where the expressions (in Python syntax) can contain any of the following aggregation functions:
-                      
+
                       min(.),
                       max(.),
                       first(.),
@@ -807,7 +802,7 @@ def main():
         sys.stderr.write('Please specify an expression to compute\n')
         parser.print_help()
         sys.exit(1)
-            
+
     if len(args) >= 1:
         filename = args[0]
         # zipped?
@@ -871,12 +866,12 @@ def main():
 
         dictAccu = aggregateNonSequential(f, colsKey, len(colNames), delim, evalLine, colsInit, colsInput)
 
-        if (not opt.uniqueFlag):        
+        if (not opt.uniqueFlag):
             # rewind
             if (gzFlag):
                 f = os.popen('zcat ' + filename)
             else:
-                f = file(filename, 'r')    
+                f = file(filename, 'r')
             outputAggregatesNonUnique(f, colsKey, dictAccu, delim, len(lhs), evalFinal, colsInit, colsInput, directDependency)
         else:
             outputAggregatesUnique(dictAccu, delim, len(lhs), evalFinal, colsInput)

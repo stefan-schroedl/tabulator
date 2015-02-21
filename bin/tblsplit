@@ -81,11 +81,11 @@ sub guess_delim
 {
     my $line = shift;
 
-    for my $delim ( "\t", ",", " ", "" )
+    for my $delim ( "", "|", ",", "\t", " " )
     {
         return $delim if ( $line =~ m/$delim/ );
     }
-    return "\t";
+    die "No delimiter found - please specify";
 }
 
 # read and store column names

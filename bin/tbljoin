@@ -38,15 +38,16 @@ my $tmp_dir   = cwd();    # directory for temporary files created by sort
 my $gz_flag_1 = 0;        # file 1 gzipped?
 my $gz_flag_2 = 0;        # file 2 gzipped?
 
+# guess file delimiter from header line
 sub guess_delim
 {
     my $line = shift;
 
-    for my $delim ( "\t", ",", " ", "" )
+    for my $delim ( "", "|", ",", "\t", " " )
     {
         return $delim if ( $line =~ m/$delim/ );
     }
-    return "\t";
+    die "No delimiter found - please specify";
 }
 
 sub parse_options()

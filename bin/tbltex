@@ -11,15 +11,10 @@ from optparse import OptionParser
 
 # guess separator from header
 def guessDelim(h):
-    if (h.find('\t')!=-1):
-        return '\t'
-    elif (h.find('')!=-1):
-        return ''
-    elif (h.find(',')!=-1):
-        return ','
-    elif (h.find(' ')!=-1):
-        return ' '
-    return ''
+    for delim in ('', '|', ',', '\t', ' '):
+        if delim in h:
+            return delim
+    raise ValueError('No delimiter found - please specify')
 
 def isNan(num):
     return num != num
@@ -30,7 +25,7 @@ def isNumeric(x):
         return True
     except Exception:
         return False
- 
+
 def format(x,prec, raw):
     if (raw):
         return x
@@ -76,9 +71,9 @@ def main():
                       help ="""Do not attempt to format numbers""",
                       action='store_true',
                       default=False)
- 
+
     (opt, args) = parser.parse_args()
-    
+
     if len(args) != 1:
         print usage
         sys.exit()
@@ -87,14 +82,14 @@ def main():
 
     prec = int(opt.prec)
     raw = opt.raw
-   
+
     print '''\\begin{table}
 \\begin{center}'''
     while 1:
         line = infile.readline()
         if not line: break
         line = line.strip() # remove newline
-      
+
         lineEmpty = (len(line) == 0)
         if (lineEmpty):
             if (not firstLine):
