@@ -176,7 +176,7 @@ cat <file> | B<tblcmd>  S<[ B<-hm> ] <cmd> >
 
 =item B<-d> <Column delimiter>
 
-Default: try any of '\t', ' ', ','
+Default: try any of '^A', '|', ',', '\t', ' '
 
 =item B<-e>
 

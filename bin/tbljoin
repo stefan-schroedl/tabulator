@@ -451,7 +451,7 @@ B<tbljoin> S<[ B<-dehklmnortv> ] file1 file2>
 
 =item B<-d> <column delimiter>
 
-default: try any of '\t', ' ', ','
+default: try any of '^A', '|', ',', '\t', ' '
 
 =item B<-e>
 

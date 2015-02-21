@@ -1216,7 +1216,7 @@ B<tbldesc>      S<[ B<-dhklmnosv> ] file>
 
 =item B<-d> 
 
-Column delimiter [Default: try any of '\t', ' ', ',']
+Column delimiter [Default: try any of '^A', '|', ',', '\t', ' ']
 
 =item B<-h>
 

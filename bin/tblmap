@@ -159,7 +159,7 @@ sub process_header
 
     $delim = guess_delim($header) unless ( $opt{'d'} );
 
-    @{$field_arr} = split $delim, $header;
+    @{$field_arr} = split "\Q$delim\E", $header;
     %{$field_hash} = ();
     my $col = 1;
 
@@ -411,7 +411,7 @@ Compute derived column (awk syntax, format: <name1=exp1,name2=exp2,...>
 
 =item B<-d> <column delimiter>
 
-Default: try any of '\t', ' ', ','
+Default: try any of '^A', '|', ',', '\t', ' '
 
 =item B<-e>
 

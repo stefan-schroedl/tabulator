@@ -307,7 +307,7 @@ Upper cutoff value
 
 =item B<-d> <column delimiter>
 
-Default: try any of '\t', ' ', ','
+Default: try any of '^A', '|', ',', '\t', ' '
 
 =item B<-h>
 

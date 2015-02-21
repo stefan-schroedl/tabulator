@@ -574,7 +574,7 @@ Check only, print out message about duplicate columns
 
 =item B<-d> <column delimiter>
 
-Default: try any of '\t', ' ', ','
+Default: try any of '^A', '|', ',', '\t', ' '
 
 =item B<-e>
 
