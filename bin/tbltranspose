@@ -66,7 +66,7 @@ sub main
         chomp;
         $delim = guess_delim($_)
           if ( ( !$opt{'d'} ) && $matrix_height == 0 );    # first line
-        my @row = split( /$delim/, $_ );
+        my @row = split( /\Q$delim\E/, $_ );
         $matrix_width = scalar(@row) if ( $matrix_width < scalar(@row) );
         push @matrix, \@row;
         $matrix_height++;

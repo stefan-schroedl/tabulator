@@ -35,7 +35,7 @@ sub process_header
 
     $delim = guess_delim($header) unless ( $opt{'d'} );
 
-    @field_arr = split $delim, $header;
+    @field_arr = split "\Q$delim\E", $header;
     %field_hash = ();
     my $col = 1;
 

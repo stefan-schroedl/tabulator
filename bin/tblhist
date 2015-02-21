@@ -104,7 +104,7 @@ sub process_header
 
     $delim = guess_delim($header) if ( !$opt{'d'} );
 
-    @fields = map { s/^\s+//; s/\s$//; lc($_); } split( /$delim/, $header );
+    @fields = map { s/^\s+//; s/\s$//; lc($_); } split( /\Q$delim\E/, $header );
 
     if ( $#fields == 0 )
     {
@@ -146,7 +146,7 @@ sub scan_bounds
     while (<$infile>)
     {
         chomp;
-        @fields = split $delim, $_;
+        @fields = split "\Q$delim\E", $_;
         my $val = $fields[$key_col];
         next unless ( $val == $val && looks_like_number($val) );
         $count_lines++;
@@ -170,7 +170,7 @@ sub process_file
     while (<$infile>)
     {
         chomp;
-        @fields = split $delim, $_;
+        @fields = split "\Q$delim\E", $_;
         my $val = $fields[$key_col];
         next unless ( $val == $val && looks_like_number($val) );
 

@@ -105,7 +105,7 @@ sub process_header
 
     $delim = guess_delim($header) unless ( $opt{'d'} );
 
-    @{$cols} = split( /$delim/, $header );
+    @{$cols} = split( /\Q$delim\E/, $header );
 
     # check if first line is indeed header
 
@@ -168,7 +168,7 @@ sub find_dep
 
         chomp;
 
-        my @vals = split /$delim/, $_;
+        my @vals = split /\Q$delim\E/, $_;
 
         if ( scalar(@vals) != $num_cols )
         {

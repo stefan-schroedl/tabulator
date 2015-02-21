@@ -510,7 +510,7 @@ sub process_header
 
     $delim = guess_delim($header) unless $opt{'d'};
 
-    @colnames = map { s/^\s+//; s/\s$//; lc($_); } split( /$delim/, $header );
+    @colnames = map { s/^\s+//; s/\s$//; lc($_); } split( /\Q$delim\E/, $header );
 
     # check if first line is indeed header
 
@@ -585,7 +585,7 @@ sub process_file
         # fill result from line
         chomp;
 
-        my @vals = split( /$delim/, $_, -1 );
+        my @vals = split( /\Q$delim\E/, $_, -1 );
 
         if ( scalar(@vals) != scalar(@colnames) )
         {
