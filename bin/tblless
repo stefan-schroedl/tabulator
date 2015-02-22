@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# view and page delimited file
+tblcolumn $1 | less -#5 -S

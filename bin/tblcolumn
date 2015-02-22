@@ -1,0 +1,185 @@
+#!/usr/bin/env python
+
+## Copyright (C) 2009-2015 Stefan Schroedl
+
+
+import sys
+import os
+import subprocess
+import textwrap
+import itertools
+from optparse import OptionParser
+from subprocess import Popen, PIPE, STDOUT
+
+# constants
+num_lines_sniff  = 1000
+max_chars_column = 2048 # maximum line length allowed for unix 'column' program
+max_chars_header_column = 10
+
+conversion_type =  {0: lambda x: long(float(x)),
+                    1: float,
+                    2: str}
+format_type     =  {0:'% 10d',
+                    1:'% g',
+                    2:'%.50s'}
+
+
+# guess separator from header
+def guess_delim(h):
+    for delim in ('', '|', ',', '\t', ' '):
+        if delim in h:
+            return delim
+    raise ValueError('No delimiter found - please specify')
+
+
+def infer_type(x):
+    if not x or x.lower() == 'na':
+        return 0
+    try:
+        f = float(x)
+        if long(f) == f:
+            return 0
+        return 1
+    except:
+        return 2
+
+# determine column types: long < float < string
+def guess_types(lines, delim):
+    cnt = 0
+    for line in lines:
+        line = line.strip().split(delim)
+        cnt += 1
+        if cnt == 1:
+            col_types  = [0] * len(line)
+            col_chars = [0] * len(line)
+            continue
+        for col in range(len(line)):
+            tp = infer_type(line[col])
+            if tp > col_types[col]:
+                col_types[col] = tp
+            col_char = len(format_type[tp] % conversion_type[tp](line[col]))
+            if col_char > col_chars[col]:
+                col_chars[col] = col_char
+    return col_types, col_chars
+
+
+def main():
+
+    usage = 'Usage: %prog -[dn] file'
+    description = """Format columns in a more readable way, using the unix 'column' program, and/or by displaying numbers in a shorter format.
+
+    Note: The 'column' program cannot handle lines longer than 2048 characters. It can also be slow for large files.
+    """
+    parser = OptionParser(usage=usage,description=description)
+    parser.add_option('-d', '--delimiter', dest='delim',
+                      help =
+                      '''Column delimiter in input file.
+                      Try to guess if unspecified''')
+    parser.add_option('-n', '--no-unix-column', dest='use_unix_column',
+                      action='store_false',
+                      default=True,
+                      help="Do not use unix 'column' program")
+
+    (opt, args) = parser.parse_args()
+
+    gz_flag = False  # input file compressed?
+    if len(args) >= 1:
+        filename = args[0]
+        # zipped?
+        fparts = filename.split('.')
+        if len(fparts) > 1:
+            ext = (fparts[-1])
+            if (ext == 'tgz' or ext == 'gz' or ext == 'zip'):
+                gz_flag = True
+                f = os.popen('zcat ' + filename)
+            else:
+                f = file(filename, 'r')
+        else:
+            f = file(filename, 'r')
+    else:
+        # try to read stdin
+        f = sys.stdin
+        if f.isatty():
+            sys.stderr.write('Please specify an input file\n')
+            parser.print_help()
+            sys.exit(1)
+
+    # get header line from file
+
+    line = f.readline().strip().lower()
+    if (opt.delim):
+        delim = opt.delim
+    else:
+        delim = guess_delim(line)
+
+
+    # wrap long names in the header
+
+    lines_header = []
+    max_chars_row = 0
+
+    line = [textwrap.wrap(col, max_chars_header_column) for col in line.split(delim)]
+    num_lines_header = max(*[len(x) for x in line])
+
+    for i in range(num_lines_header):
+        line_header = [(col[i] if i < len(col) else '') for col in line]
+        # padding
+        line_header = [col + ('_' * (max_chars_header_column - len(col))) for col in line_header]
+        line_header = '\t'.join(line_header) + '\n'
+        max_chars_row = max(max_chars_row, len(line_header))
+        lines_header.append(line_header)
+
+    # sniff initial lines to determine types
+    cnt = 0
+    lines = []
+    eof = False
+    for line in f:
+        cnt += 1
+        lines.append(line.strip())
+        if cnt == num_lines_sniff:
+            break
+    else:
+        eof = True
+
+    (types_row, chars_row)  = guess_types(lines, delim)
+    len_row = len(types_row)
+
+    format_row = '\t'.join([format_type[tp] for tp in types_row]) + '\n'
+    conversion_types_row = [conversion_type[tp] for tp in types_row]
+
+    # format sniffed lines
+    for i in range(len(lines)):
+        line = lines[i].split(delim)
+        lines[i] = format_row % tuple(conversion_types_row[j](line[j]) for j in range(len_row))
+        max_chars_row = max(max_chars_row, len(lines[i]))
+
+    # start output
+
+    # note: 'column' only works for line length <= 2048
+    use_unix_column = opt.use_unix_column and max_chars_row < max_chars_column
+    if use_unix_column:
+        p_col = Popen(['column', '-s', '\t', '-t'], stdin=PIPE)
+        OUT = p_col.stdin
+    else:
+        if opt.use_unix_column:
+            print "warning: lines too long for 'column' program"
+        OUT = sys.stdout
+
+    try:
+
+        for line in itertools.chain(lines_header, lines):
+            OUT.write(line)
+
+        if not eof:
+            for line in f:
+                line = line.strip().split(delim)
+                OUT.write(format_row % tuple(conversion_types_row[i](line[i]) for i in range(len_row)))
+
+        if use_unix_column:
+            p_col.stdin.close()
+
+    except IOError:
+        pass
+
+if __name__ == '__main__':
+    main()
