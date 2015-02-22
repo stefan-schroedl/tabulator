@@ -6,10 +6,11 @@ use strict;
 use warnings;
 use Getopt::Std;
 use FileHandle;
+use File::Spec;
 use Pod::Usage;
 
 my $header     = "UNINIT";
-my $opt_string = 'hmed:';
+my $opt_string = "d:ehk:ms";
 my %opt;
 
 my $delim = "\t";
@@ -46,48 +47,79 @@ sub process_header
     }
 }
 
-sub replace_column_names
+sub parse_keys
 {
     my $input = shift;
+    my $out_spec = '';
 
-    # must replace longest names first, possible string overlap!
-    my @sorted_names = sort { length($b) <=> length($a) } @field_arr;
-    foreach my $name (@sorted_names)
-    {
-        my $col = ${ field_hash { $name } };
-        $input =~ s/\?$name/$col/g;
+    my $valid_flags = "bdfgiMnr";
+
+    my @key_specs = split ",", $input;
+    for my $key_spec (@key_specs) {
+        my @parts = split "/", $key_spec;
+        if ($#parts > 1)
+        {
+            die "Error in key spec: $key_spec";
+        }
+        my $col_name = $parts[0];
+        
+        if ( !($col_name =~ /\d+/) )
+        {
+            if ( !exists($field_hash{$col_name}) )
+            {
+                die "Unknown column: $col_name";
+            }
+            $col_name = $field_hash{$col_name};
+        }
+        $out_spec = "$out_spec -k$col_name";
+
+        my $flags = '';
+        if ( $#parts == 1 ) 
+        {
+           $flags = $parts[1];
+           foreach my $flag ( split //, $flags ) 
+           {
+               if ( !( $valid_flags =~ /\Q$flag\E/ ) ) 
+               {
+                   die "Invalid sort flag: $flag";
+               }
+           }
+           $out_spec = "${out_spec}${flags}";
+        }
     }
-
-    # delimiter symbol
-    $input =~ s/\?delim/$delim/g;
-    return $input;
+    return $out_spec;
 }
+
 
 sub main
 {
     Getopt::Std::getopts( $opt_string, \%opt ) or pod2usage(2);
 
     pod2usage( { -exitval => 0, -verbose => 2 } ) if $opt{'m'};
-    pod2usage(1) if ( $opt{h} or $#ARGV < 0 );
+    pod2usage(1) if ( $opt{'h'} );
 
     pod2usage(2) if $#ARGV > 1;
 
     $delim = $opt{'d'} if ( $opt{'d'} );
 
-    my $cmd = $ARGV[0];
-
     my $filename = '';
-
     my $opt_gz = 0;
+    my $temp_dir = '.';
 
-    if ( $#ARGV > 0 && $ARGV[1] !~ m/^-/ )
+    if ( $#ARGV > -1 )
     {
-        $filename = $ARGV[1];
+        $filename = $ARGV[0];
         $opt_gz = ( $filename =~ /\.gz$|\.Z$|\.zip$/ );
+
+         my ( $vol, $dir, $file ) =
+             File::Spec->splitpath( $filename );
+        if ( $dir ne '' )
+        {
+            $temp_dir = $dir;
+        }
     }
     else
     {
-
         # try to read stdin
         if ( -t *STDIN )
         {
@@ -117,13 +149,25 @@ sub main
     $header =~ s/\s+$//g;
     process_header($header);
 
-    $cmd = replace_column_names($cmd);
+    my $key_args = '';
+    if ( $opt{'k'} )
+    {
+        $key_args = parse_keys($opt{'k'});
+    }
+
+    my $stable_flag = '';
+    if ( $opt{'s'} )
+    {
+        $stable_flag = '-s';
+    }
+
+    my $cmd = "sort -t'$delim' -S 500M $stable_flag -T $temp_dir $key_args";
 
     if ( $opt{'e'} )
     {
         if ( $filename eq '-' )
         {
-            printf "tail -n +2 | (echo '$header' ; $cmd)\n";
+            print "tail -n +2 | (echo '$header' ; $cmd)\n";
         }
         else
         {
@@ -137,7 +181,7 @@ sub main
 
         if ( $filename eq '-' )
         {
-            open( STDOUT, "| (echo '$header' ; $cmd)" );
+            open( STDOUT, sprintf( "| (echo '$header' ; %s)", $cmd ) );
 
             while (<$infile>)
             {
@@ -148,7 +192,7 @@ sub main
         {
             $infile->close();
             system(
-                sprintf("$CAT $filename | tail -n +2 | (echo '$header' ; $cmd)")
+                sprintf( "$CAT $filename | tail -n +2 | (echo '$header' ; $cmd)" )
             );
         }
     }
@@ -160,13 +204,13 @@ __END__
 
 =head1 NAME
 
-tblcmd - Run command (e.g., sort, uniq) on body of file, keep header unchanged
+tblsort - sort on body of file, keep header unchanged
 
 =head1 SYNOPSIS
 
-B<tblcmd>  [ B<-hm> ] <cmd> <file>
+B<tblsort>  [ B<-dehkms> ] <file>
 
-cat <file> | B<tblcmd>  S<[ B<-hm> ] <cmd> >
+cat <file> | B<tblsort>  S<[ B<-dehkms> ] >
 
 =head1 OPTIONS
 
@@ -175,6 +219,10 @@ cat <file> | B<tblcmd>  S<[ B<-hm> ] <cmd> >
 =item B<-d> <Column delimiter>
 
 Default: try any of '^A', '|', ',', '\t', ' '
+
+=item B<-k> <Sort key list>
+
+Comma-delimited list of sort keys, either column names or indices. Optionally, the common unix sort flags can be specified for each key, in the form <column name>/<flags>.
 
 =item B<-e>
 
@@ -188,17 +236,21 @@ Show this help message
 
 Print manual page
 
+=item B<-s>
+
+Use stable sort algorithm
+
 =back
 
 =head1 DESCRIPTION
 
-This program expects a delimited file, where the first line is interpreted as a header. It outputs the header, then calls <cmd> on `tail -n +2 file`, with substitions: each occurrence of ?<column name>, for column names in the header, are replaced by the respective column index; and '?delim' is replaced by the detected column delimiter.
+This program expects a delimited file, where the first line is interpreted as a header. It outputs the header, then calls sort on `tail -n +2 file`, with the specified options.
 
 =head1 EXAMPLES
 
-tblcmd 'sort -t"?delim" -k ?user_name' file.txt | less
+tblsort -k user_name' file.txt | less
 
-cat file.txt | tblcmd 'sort -t"?delim" -k ?user_name' | less
+cat file.txt | tblsort -k sales/rd,customer/f' | less
 
 =head1 AUTHOR
 
@@ -206,7 +258,7 @@ Stefan Schroedl E<lt>stefan.schroedl@gmx.deE<gt>
 
 =head1 COPYRIGHT
 
-Copyright (c) 2009-2014 by Stefan Schroedl
+Copyright (c) 2009-2015 by Stefan Schroedl
 
 =head1 LICENSE
 

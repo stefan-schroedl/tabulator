@@ -15,7 +15,6 @@ Author: Stefan Schroedl
 ## Purpose
 
 
-
 Unix/Linux comes with several tools, such as `cut,` `paste,` `join,` `sort,` to
 process tabular text data files (a.k.a., *tab-delimited*, *csv*, *tsv*,
 or *flat file* format). However, they have shortcomings that often requires
@@ -143,6 +142,7 @@ the column names.
         de
         fr
 
+* `tblsort:` interface for unix sort.
 * `tbltex:` formatting for latex tables.
 * `tbltranspose:` transposition of rows and columns.
 * `tbluniq:` check for and cut out duplicate columns; also, discover functional
