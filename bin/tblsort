@@ -187,6 +187,7 @@ sub main
             {
                 print;
             }
+	    close STDOUT;
         }
         else
         {
