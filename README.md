@@ -147,6 +147,7 @@ the column names.
 * `tbltranspose:` transposition of rows and columns.
 * `tbluniq:` check for and cut out duplicate columns; also, discover functional
      value dependencies.
+* tblless: page through formatted column output.
 
 ## Implementation Notes
 
