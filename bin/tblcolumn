@@ -24,7 +24,7 @@ def align_float(x):
     mant   = parts[0].partition('.')
     digits_before = mant[0].rjust(max_decimals_before_point)
     digits_after  = mant[2].ljust(max_decimals_after_point)
-    return (digits_before, digits_after, parts[1] + parts[2])
+    return (digits_before, digits_after, (parts[1] + parts[2]).ljust(4))
 
 conversion_type =  {0: lambda x: (long(float(x)),),
                     1: align_float,
