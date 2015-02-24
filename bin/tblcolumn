@@ -15,22 +15,31 @@ from subprocess import Popen, PIPE, STDOUT
 num_lines_sniff  = 1000
 max_chars_column = 2048 # maximum line length allowed for unix 'column' program
 max_chars_header_column = 10
+max_decimals_before_point = 7
+max_decimals_after_point = 9
 
-conversion_type =  {0: lambda x: long(float(x)),
-                    1: float,
-                    2: str}
+def align_float(x):
+    '''return three properly aligned parts: before point, after point, exponent'''
+    parts = ('% g' % (float(x))).partition('e')
+    mant   = parts[0].partition('.')
+    digits_before = mant[0].rjust(max_decimals_before_point)
+    digits_after  = mant[2].ljust(max_decimals_after_point)
+    return (digits_before, digits_after, parts[1] + parts[2])
+
+conversion_type =  {0: lambda x: (long(float(x)),),
+                    1: align_float,
+                    2: lambda x: (x,)}
+
 format_type     =  {0:'% 10d',
-                    1:'% g',
+                    1:'%s.%s%s',
                     2:'%.50s'}
 
-
-# guess separator from header
 def guess_delim(h):
+    '''guess separator from header'''
     for delim in ('', '|', ',', '\t', ' '):
         if delim in h:
             return delim
     raise ValueError('No delimiter found - please specify')
-
 
 def infer_type(x):
     if not x or x.lower() == 'na':
@@ -43,8 +52,8 @@ def infer_type(x):
     except:
         return 2
 
-# determine column types: long < float < string
 def guess_types(lines, delim):
+    '''determine column types: long < float < string'''
     cnt = 0
     for line in lines:
         line = line.strip().split(delim)
@@ -145,12 +154,12 @@ def main():
     len_row = len(types_row)
 
     format_row = '\t'.join([format_type[tp] for tp in types_row]) + '\n'
-    conversion_types_row = [conversion_type[tp] for tp in types_row]
+    conversion_types_row = tuple(conversion_type[tp] for tp in types_row)
 
     # format sniffed lines
     for i in range(len(lines)):
         line = lines[i].split(delim)
-        lines[i] = format_row % tuple(conversion_types_row[j](line[j]) for j in range(len_row))
+        lines[i] = format_row % tuple(itertools.chain(*(conversion_types_row[j](line[j]) for j in range(len_row))))
         max_chars_row = max(max_chars_row, len(lines[i]))
 
     # start output
