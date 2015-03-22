@@ -6,6 +6,7 @@ Author: Stefan Schroedl
 
 ## Date
 
+* 2015/03/21 release 1.2
 * 2014/10/12 release 1.1.2
 * 2012/01/24 release 1.1.1
 * 2011/11/25 release 1.1.0
@@ -147,7 +148,9 @@ the column names.
 * `tbltranspose:` transposition of rows and columns.
 * `tbluniq:` check for and cut out duplicate columns; also, discover functional
      value dependencies.
-* tblless: page through formatted column output.
+* `tblcolumn:` format columns in a more readable way, using the unix 'column'
+     program, and aligning and shortening numbers.
+* `tblless:` page through formatted column output (calls tblcolumn).
 
 ## Implementation Notes
 

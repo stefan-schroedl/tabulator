@@ -24,7 +24,7 @@ sub guess_delim
 
     for my $delim ( "", "|", ",", "\t", " " )
     {
-        return $delim if ( $line =~ m/$delim/ );
+        return $delim if ( $line =~ m/\Q$delim\E/ );
     }
     die "No delimiter found - please specify";
 }

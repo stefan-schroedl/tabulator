@@ -75,7 +75,7 @@ def guess_types(lines, delim):
 def main():
 
     usage = 'Usage: %prog -[dn] file'
-    description = """Format columns in a more readable way, using the unix 'column' program, and/or by displaying numbers in a shorter format.
+    description = """Format columns in a more readable way, using the unix 'column' program, and by aligning and shortening numbers.
 
     Note: The 'column' program cannot handle lines longer than 2048 characters. It can also be slow for large files.
     """
