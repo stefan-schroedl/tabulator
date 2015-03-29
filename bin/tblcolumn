@@ -61,7 +61,6 @@ def guess_types(lines, delim):
         if cnt == 1:
             col_types  = [0] * len(line)
             col_chars = [0] * len(line)
-            continue
         for col in range(len(line)):
             tp = infer_type(line[col])
             if tp > col_types[col]:
