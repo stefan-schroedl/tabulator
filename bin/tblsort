@@ -172,7 +172,7 @@ sub main
         }
         else
         {
-            printf "$CAT $filename | tail -n +2 | (echo '$header' ; $cmd)\n";
+            print "$CAT $filename | tail -n +2 | (echo '$header' ; $cmd)\n";
         }
         exit(0);
     }
@@ -182,7 +182,7 @@ sub main
 
         if ( $filename eq '-' )
         {
-            open( STDOUT, sprintf( "| (echo '$header' ; %s)", $cmd ) );
+            open( STDOUT, "| (echo '$header' ; $cmd)");
 
             while (<$infile>)
             {
@@ -193,9 +193,7 @@ sub main
         else
         {
             $infile->close();
-            system(
-                sprintf( "$CAT $filename | tail -n +2 | (echo '$header' ; $cmd)" )
-            );
+            system("$CAT $filename | tail -n +2 | (echo '$header' ; $cmd)");
         }
     }
 }
