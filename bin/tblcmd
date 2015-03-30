@@ -123,11 +123,11 @@ sub main
     {
         if ( $filename eq '-' )
         {
-            printf "tail -n +2 | (echo '$header' ; $cmd)\n";
+            print "tail -n +2 | (echo '$header' ; $cmd)\n";
         }
         else
         {
-            printf "$CAT $filename | tail -n +2 | (echo '$header' ; $cmd)\n";
+            print "$CAT $filename | tail -n +2 | (echo '$header' ; $cmd)\n";
         }
         exit(0);
     }
@@ -147,9 +147,7 @@ sub main
         else
         {
             $infile->close();
-            system(
-                sprintf("$CAT $filename | tail -n +2 | (echo '$header' ; $cmd)")
-            );
+            system("$CAT $filename | tail -n +2 | (echo '$header' ; $cmd)");
         }
     }
 }

@@ -636,10 +636,6 @@ sub process_file
                 }
                 else
                 {
-                    if ( $colnames[$col] eq 'keywords' )
-                    {
-                        printf( "ACCEPT\t%s\t%s\n", $field, ( $field + 0 ) );
-                    }
                     $numeric[$col]++;
                     $min_val[$col] = $field if ( $min_val[$col] > $field );
                     $max_val[$col] = $field if ( $max_val[$col] < $field );
@@ -864,7 +860,6 @@ sub compute_summary
                 $summary[$col]->{'mar'} =
                   max( 0.0, fprob( 1, $df, $f_adj_split ) );
 
-#printf("MAR %s %d %f %f %f %f %f %f\n", $colnames[$col], $cnt_na, $f_adj_split, $ss_e_split, $ss_r_split, $ss_t_non_na, $ss_t_na, $ss_t);
             }
 
             # determine type of predictor
