@@ -20,19 +20,31 @@ max_decimals_after_point = 9
 
 def align_float(x):
     '''return three properly aligned parts: before point, after point, exponent'''
-    parts = ('% g' % (float(x))).partition('e')
-    mant   = parts[0].partition('.')
-    digits_before = mant[0].rjust(max_decimals_before_point)
-    digits_after  = mant[2].ljust(max_decimals_after_point)
-    return (digits_before, digits_after, (parts[1] + parts[2]).ljust(4))
+    try:
+        parts = ('% g' % (float(x))).partition('e')
+        mant   = parts[0].partition('.')
+        digits_before = mant[0].rjust(max_decimals_before_point)
+        digits_after  = mant[2].ljust(max_decimals_after_point)
+        expo = (parts[1] + parts[2]).ljust(4)
+    except:
+        digits_before = 'NA'.rjust(max_decimals_before_point)
+        digits_after = ' ' * max_decimals_after_point
+        expo = '    '
+    return (digits_before, digits_after, expo)
 
-conversion_type =  {0: lambda x: (long(float(x)),),
+def align_int(x):
+    try:
+        return ('% 10d' % long(float(x)),)
+    except:
+        return ('        NA',)
+
+conversion_type =  {0: align_int,
                     1: align_float,
                     2: lambda x: (x,)}
 
-format_type     =  {0:'% 10d',
+format_type     =  {0:'%s',
                     1:'%s.%s%s',
-                    2:'%.50s'}
+                    2:'%1.50s'}
 
 def guess_delim(h):
     '''guess separator from header'''
@@ -65,7 +77,10 @@ def guess_types(lines, delim):
             tp = infer_type(line[col])
             if tp > col_types[col]:
                 col_types[col] = tp
-            col_char = len(format_type[tp] % conversion_type[tp](line[col]))
+            try:
+                col_char = len(format_type[tp] % conversion_type[tp](line[col]))
+            except:
+                pass
             if col_char > col_chars[col]:
                 col_chars[col] = col_char
     return col_types, col_chars
