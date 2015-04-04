@@ -1,6 +1,6 @@
-Version 1.1.4 (04/03/2015)
+Version 1.2.1 (04/03/2015)
    * Bug fixes
-Version 1.1.3 (03/21/2015)
+Version 1.2.0 (03/21/2015)
    * Fixes to properly handle pipe delimiter
    * Added new scripts: tblcolumn, tblless, tblsort
 Version 1.1.2 (10/12/2014)
