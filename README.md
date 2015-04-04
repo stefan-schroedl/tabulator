@@ -5,7 +5,7 @@ URL: https://github.com/stefan-schroedl/tabulator
 Author: Stefan Schroedl
 
 ## Date
-
+* 2015/04/03 release 1.2.1
 * 2015/03/21 release 1.2
 * 2014/10/12 release 1.1.2
 * 2012/01/24 release 1.1.1
