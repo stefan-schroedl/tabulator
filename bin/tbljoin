@@ -178,7 +178,7 @@ sub process_header
 
     $delim = guess_delim($header) unless $opt{'d'};
 
-    my @fields = map { s/^\s+//; s/\s$//; lc($_); } split( /$delim/, $header );
+    my @fields = map { s/^\s+//; s/\s$//; lc($_); } split( /\Q$delim\E/, $header );
 
     # apply aliases
     my $changed = 0;
@@ -318,7 +318,7 @@ sub get_script_text
     # set delimiter in join options
     $unix_join_opts .= "-t'$delim' -j1 ";
 
-    my $join_format = join $delim, @joined_cols;
+    my $join_format = join ',', @joined_cols;
 
     # for full outer join, merge key column
     my $merge_key = "";

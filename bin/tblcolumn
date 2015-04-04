@@ -54,7 +54,10 @@ def guess_delim(h):
     raise ValueError('No delimiter found - please specify')
 
 def infer_type(x):
-    if not x or x.lower() == 'na':
+    if not x:
+        return 0
+    x = x.lower()
+    if x == 'na' or x == 'nan':
         return 0
     try:
         f = float(x)
