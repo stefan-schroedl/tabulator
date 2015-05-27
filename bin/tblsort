@@ -72,7 +72,7 @@ sub parse_keys
             }
             $col_name = $field_hash{$col_name};
         }
-        $out_spec = "$out_spec -k$col_name";
+        $out_spec = "$out_spec -k$col_name,$col_name";
 
         my $flags = '';
         if ( $#parts == 1 ) 
